@@ -1,0 +1,803 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor de inundaciones · Belcorp Ecuador</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel-2:#0e1726; --line:#1e2d44;
+    --ink:#e7eef7; --muted:#8aa0bd; --faint:#5f7796;
+    --cyan:#38bdf8; --cyan-deep:#0ea5e9;
+    --critico:#ef4444; --alto:#f97316; --medioalto:#facc15; --medio:#22c55e;
+    --roja:#dc2626; --naranja:#f97316; --amarilla:#eab308; --normal:#38bdf8;
+    --mono:"SFMono-Regular",ui-monospace,"Cascadia Code","Roboto Mono",Menlo,Consolas,monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;
+       display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  /* ---- top bar ---- */
+  header{display:flex;align-items:center;gap:18px;padding:12px 18px;background:var(--panel);
+         border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{display:flex;flex-direction:column;line-height:1.15}
+  .brand .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--cyan)}
+  .brand h1{margin:2px 0 0;font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap}
+  .credit{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap;padding-left:14px;border-left:1px solid var(--line);align-self:flex-end;margin-bottom:1px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{background:transparent;color:var(--muted);border:0;padding:7px 12px;font-size:12px;cursor:pointer;font-family:var(--mono);letter-spacing:.03em}
+  .seg button.on{background:var(--cyan-deep);color:#06121f;font-weight:600}
+  .btn{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;
+       padding:7px 13px;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{border-color:var(--cyan-deep)}
+  .btn.primary{background:var(--cyan-deep);color:#06121f;border-color:var(--cyan-deep);font-weight:600}
+  .btn.ghost{background:transparent}
+  /* ---- context strip ---- */
+  .ctx{display:flex;gap:16px;align-items:center;padding:6px 18px;background:var(--panel-2);
+       border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--muted);
+       letter-spacing:.04em;flex-wrap:wrap}
+  .ctx b{color:var(--ink);font-weight:600}
+  .ctx .sep{color:var(--faint)}
+  .ctx .dotp{width:6px;height:6px;border-radius:50%;background:var(--amarilla);display:inline-block;margin-right:5px}
+  /* ---- quick chips ---- */
+  .chips{display:flex;gap:6px;padding:8px 12px 0;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;padding:4px 9px;border-radius:20px;
+        border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
+  .chip:hover{border-color:var(--cyan-deep)}
+  .chip.on{background:var(--cyan-deep);border-color:var(--cyan-deep);color:#06121f;font-weight:600}
+  .chip.nv.on{background:#7c3aed;border-color:#7c3aed;color:#fff}
+  /* ---- main split ---- */
+  main{flex:1;display:flex;min-height:0}
+  #map{flex:1.6;min-width:0;background:#0a0f1a}
+  .panel{flex:1;max-width:460px;min-width:320px;background:var(--panel-2);border-left:1px solid var(--line);
+         display:flex;flex-direction:column;min-height:0}
+  /* ---- stats ---- */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(74px,1fr));gap:1px;background:var(--line)}
+  .stat{background:var(--panel-2);padding:11px 12px}
+  .stat .n{font-family:var(--mono);font-size:21px;font-weight:600;line-height:1}
+  .stat .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:5px}
+  .stat.c .n{color:var(--critico)} .stat.a .n{color:var(--alto)}
+  .stat.t .n{color:var(--cyan)} .stat.p .n{color:var(--ink)} .stat.k .n{color:#a78bfa}
+  /* ---- filter row ---- */
+  .filterbar{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center}
+  .filterbar input,.filterbar select{background:var(--bg);color:var(--ink);border:1px solid var(--line);
+       border-radius:7px;padding:7px 9px;font-size:12.5px;font-family:var(--sans)}
+  .filterbar input{flex:1}
+  /* ---- list ---- */
+  .list{overflow:auto;flex:1}
+  .row{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;
+       padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+  .row:hover{background:#13203450}
+  .row .pav{text-align:right}
+  .row .pav .pn{font-family:var(--mono);font-size:13px;font-weight:600}
+  .row .pav .pl{font-size:8.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin-top:1px}
+  .stat.nv .n{color:#a78bfa}
+  .stat.click{cursor:pointer} .stat.click:hover{background:#13203450}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .row .name{font-weight:600;font-size:13.5px}
+  .row .sub{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+  .tags{display:flex;gap:5px;align-items:center}
+  .tag{font-size:9.5px;font-family:var(--mono);letter-spacing:.04em;padding:3px 6px;border-radius:5px;
+       text-transform:uppercase;font-weight:600;white-space:nowrap}
+  .row .acts{display:flex;gap:4px;opacity:0;transition:opacity .12s}
+  .row:hover .acts{opacity:1}
+  .icon{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:6px;
+        width:26px;height:26px;cursor:pointer;font-size:13px;line-height:1}
+  .icon:hover{color:var(--ink);border-color:var(--cyan-deep)}
+  .empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:13px}
+  .empty b{color:var(--ink);display:block;margin-bottom:6px}
+  /* ---- legend ---- */
+  .legend{position:absolute;left:12px;bottom:14px;z-index:500;background:#0c1626ee;border:1px solid var(--line);
+          border-radius:10px;padding:10px 12px;backdrop-filter:blur(4px)}
+  .legend .lt{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:7px}
+  .legend .li{display:flex;align-items:center;gap:7px;font-size:12px;margin:4px 0}
+  .legend .sw{width:11px;height:11px;border-radius:50%;flex:none}
+  .legend .lv{margin-left:auto;font-family:var(--mono);font-size:11.5px;font-weight:600;padding-left:14px}
+  .legend .lcap{font-size:9.5px;color:var(--muted);font-family:var(--mono);margin-top:7px;border-top:1px solid var(--line);padding-top:6px}
+  /* ---- modal ---- */
+  .scrim{position:fixed;inset:0;background:#04080f99;display:none;align-items:center;justify-content:center;z-index:1000;padding:18px}
+  .scrim.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:520px;max-width:100%;
+         max-height:90vh;overflow:auto;box-shadow:0 24px 60px #0009}
+  .modal h2{margin:0;padding:16px 20px;font-size:15px;border-bottom:1px solid var(--line)}
+  .form{padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .f{display:flex;flex-direction:column;gap:5px}
+  .f.full{grid-column:1/3}
+  .f label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+  .f input,.f select,.f textarea{background:var(--bg);color:var(--ink);border:1px solid var(--line);
+       border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--sans)}
+  .f textarea{resize:vertical;min-height:54px}
+  .modal-foot{display:flex;gap:8px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--line)}
+  .modal-foot .del{margin-right:auto;color:var(--critico);border-color:#3a1a22}
+  .hint{font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--cyan-deep);color:#06121f;
+         padding:10px 18px;border-radius:9px;font-weight:600;font-size:13px;z-index:2000;opacity:0;transition:opacity .2s;pointer-events:none}
+  .toast.on{opacity:1}
+  .saved{font-family:var(--mono);font-size:10.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .saved .pulse{width:7px;height:7px;border-radius:50%;background:var(--medio)}
+  @media(max-width:820px){
+    main{flex-direction:column} #map{flex:none;height:46vh} .panel{max-width:none;border-left:0;border-top:1px solid var(--line)}
+    .stats{grid-template-columns:repeat(auto-fit,minmax(72px,1fr))}
+  }
+  /* leaflet popup theming */
+  .leaflet-popup-content-wrapper{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px}
+  .leaflet-popup-tip{background:var(--panel);border:1px solid var(--line)}
+  .leaflet-popup-content{margin:12px 14px;font-family:var(--sans)}
+  .pop h3{margin:0 0 2px;font-size:14px}
+  .pop .pp{font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:8px}
+  .pop .pg{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12px;margin-bottom:8px}
+  .pop .pg span:nth-child(odd){color:var(--muted)}
+  .pop button{width:100%;background:var(--cyan-deep);color:#06121f;border:0;border-radius:7px;padding:7px;font-weight:600;cursor:pointer}
+  .pop .pl{font-size:11.5px;margin:3px 0;line-height:1.35}
+  .pop .pl b{color:var(--muted);font-weight:600}
+  .pop .cchip{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .pnews{margin:8px 0;padding:8px 9px;background:#1e293b60;border-left:3px solid var(--cyan);border-radius:0 7px 7px 0}
+  .pnews-t{font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:.05em;font-family:var(--mono);margin-bottom:4px;font-weight:700}
+  .pnews-body{font-size:11.5px;line-height:1.4;color:var(--ink)}
+  .pnews-src{font-size:10px;color:var(--muted);margin-top:5px;font-family:var(--mono)}
+  .pnews-src a{color:var(--cyan);text-decoration:none}
+  .pnews-src a:hover{text-decoration:underline}
+  .pzs{margin:8px 0}
+  .pzs-t{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-family:var(--mono);margin-bottom:5px}
+  .pzs-box{max-height:74px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:4px;padding:6px;
+           background:var(--bg);border:1px solid var(--line);border-radius:7px}
+  .pzs-chip{font-family:var(--mono);font-size:10px;color:var(--cyan);background:#38bdf81a;
+            padding:2px 6px;border-radius:4px;white-space:nowrap}
+  .prov-tip{background:#0c1626ee;border:1px solid var(--line);color:var(--ink);font-family:var(--mono);
+            font-size:11px;letter-spacing:.03em;padding:3px 8px;border-radius:6px;box-shadow:none}
+  .prov-tip::before{border-top-color:var(--line)}
+  .hrow{display:flex;gap:10px;align-items:flex-start;margin:8px 0}
+  .hk{flex:none;width:62px;font-family:var(--mono);font-size:10px;font-weight:700;color:var(--cyan);letter-spacing:.05em;padding-top:2px}
+  .hb{flex:none;width:11px;height:11px;border-radius:50%;margin-top:5px}
+  .sumt{width:100%;border-collapse:collapse;font-size:12.5px}
+  .sumToggle{display:flex;gap:4px;margin-left:auto}
+  .sumToggle button{font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;padding:5px 11px;
+    border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
+  .sumToggle button.on{background:var(--cyan-deep);border-color:var(--cyan-deep);color:#06121f;font-weight:600}
+  .sumt tr.reg-row td{background:#13203450;font-weight:700;border-top:2px solid var(--line)}
+  .sumt tr.zona-row td{font-size:11px;color:var(--muted);padding-left:22px;border-bottom:1px dashed var(--line)}
+  .sumt tr.zona-row .zc{color:var(--cyan);font-family:var(--mono);font-weight:600}
+  .sumt th,.sumt td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+  .sumt th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+  .sumt td:first-child,.sumt th:first-child{text-align:left;font-weight:600}
+  .sumt td.num{font-family:var(--mono)}
+  .sumt tr.tot td,.sumt tfoot td{font-weight:700;border-top:2px solid var(--line);background:#13203450}
+  .sumt .cc{display:inline-block;min-width:22px;padding:1px 6px;border-radius:5px;font-family:var(--mono);font-weight:600}
+  .sumt tbody tr:hover{background:#13203440}
+</style>
+
+<header>
+  <div class="brand">
+    <span class="eyebrow">Sala de situación · Operaciones Ecuador</span>
+    <h1>Monitor de inundaciones — Belcorp Ecuador</h1>
+  </div>
+  <div class="toolbar">
+    <div class="seg" title="Colorear marcadores por...">
+      <button id="modeNivel" class="on" onclick="setMode('nivel')">Riesgo estructural</button>
+      <button id="modeEstado" onclick="setMode('estado')">Estado operativo</button>
+      <button id="modeConec" onclick="setMode('conectividad')">Conectividad vial</button>
+    </div>
+    <button class="btn primary" onclick="openForm()">+ Cantón</button>
+    <button class="btn ghost" onclick="openSummary()">Resumen</button>
+    <button class="btn ghost" onclick="openHelp()" title="¿Cómo leer el mapa?" style="font-weight:700">?</button>
+    <button class="btn ghost" onclick="document.getElementById('imp').click()">Importar</button>
+    <button class="btn ghost" onclick="exportData()">Exportar JSON</button>
+    <button class="btn ghost" onclick="exportXlsx()">Exportar Excel</button>
+    <button class="btn ghost" onclick="resetData()" title="Restaurar los cantones con alerta activa">Reset</button>
+    <input id="imp" type="file" accept="application/json" style="display:none" onchange="importData(event)">
+  </div>
+  <span class="credit">Diseño · Alfonso Cifuentes Gándara</span>
+</header>
+<div class="ctx" id="ctx"></div>
+
+<main>
+  <div id="map">
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="panel">
+    <div class="stats" id="stats"></div>
+    <div class="chips" id="chips"></div>
+    <div class="filterbar">
+      <input id="search" placeholder="Buscar cantón o provincia…" oninput="render()">
+      <select id="fProv" onchange="render()"><option value="">Todas las provincias</option></select>
+      <span class="saved" id="savedTag"><span class="pulse"></span><span id="savedTxt">en memoria</span></span>
+    </div>
+    <div class="list" id="list"></div>
+  </div>
+</main>
+
+<div class="scrim" id="scrim">
+  <div class="modal">
+    <h2 id="mTitle">Nuevo cantón</h2>
+    <div class="form">
+      <div class="f"><label>Provincia</label><input id="i_prov"></div>
+      <div class="f"><label>Cantón</label><input id="i_canton"></div>
+      <div class="f"><label>Nivel de riesgo (estructural)</label>
+        <select id="i_nivel"><option>CRÍTICO</option><option>ALTO</option><option>MEDIO-ALTO</option><option>MEDIO</option></select></div>
+      <div class="f"><label>Score (1–4)</label><input id="i_score" type="number" min="1" max="4" step="1"></div>
+      <div class="f"><label>% territorio inundable</label><input id="i_pct" placeholder="ej. 99,93% o n/d"></div>
+      <div class="f"><label>Cuenca de recurrencia crónica</label>
+        <select id="i_cuenca"><option value="false">No</option><option value="true">Sí</option></select></div>
+      <div class="f"><label>Latitud</label><input id="i_lat" type="number" step="0.0001"></div>
+      <div class="f"><label>Longitud</label><input id="i_lng" type="number" step="0.0001"></div>
+      <div class="f"><label>Estado operativo actual</label>
+        <select id="i_estado"><option>Normal</option><option>Amarilla</option><option>Naranja</option><option>Roja</option></select></div>
+      <div class="f"><label>Posibles afectadas</label><input id="i_afectados" type="number" min="0" step="1"></div>
+      <div class="f"><label>Consultoras afectadas</label><input id="i_consult" type="number" min="0" step="1"></div>
+      <div class="f"><label>Consultoras (base/total)</label><input id="i_consultbase" type="number" min="0" step="1"></div>
+      <div class="f full"><label>Última actualización</label><input id="i_fecha" type="date"></div>
+      <div class="f full"><label>Observaciones / sustento</label><textarea id="i_obs"></textarea></div>
+      <div class="f full"><label>Tipo de afectación principal</label><input id="i_tipo"></div>
+      <div class="f full"><label>Ruta alterna sugerida</label><input id="i_rutas"></div>
+      <div class="f full"><label>Estado de conectividad vial</label><input id="i_conec" placeholder="ej. Restringido / Habilitado / Bloqueado"></div>
+      <input id="i_id" type="hidden">
+    </div>
+    <div class="modal-foot">
+      <button class="btn del" id="delBtn" onclick="deleteRecord()" style="display:none">Eliminar</button>
+      <button class="btn ghost" onclick="closeForm()">Cancelar</button>
+      <button class="btn primary" onclick="saveRecord()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="helpScrim">
+  <div class="modal" style="width:600px">
+    <h2>Cómo leer el monitor</h2>
+    <div style="padding:16px 20px;font-size:13px;line-height:1.5;color:var(--ink)">
+      <p style="margin:0 0 12px">Cada punto del mapa es un <b>cantón</b>. Te da dos datos a la vez:</p>
+      <div class="hrow"><span class="hk">COLOR</span><span>depende del <b>modo activo</b> (botones de arriba). Cambia de modo y el mismo cantón se repinta según otro criterio.</span></div>
+      <div class="hrow"><span class="hk">TAMAÑO</span><span>crece con las <b>posibles afectadas</b> (igual en los tres modos). Punto grande = más población expuesta.</span></div>
+      <p style="margin:14px 0 6px;color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em">Los tres modos</p>
+      <div class="hrow"><span class="hb" style="background:#ef4444"></span><div><b>Riesgo estructural</b> — vulnerabilidad de fondo del cantón, no cambia día a día. <i>¿Qué tan peligroso es el lugar por naturaleza?</i> Crítico / Alto / Medio-Alto / Medio.</div></div>
+      <div class="hrow"><span class="hb" style="background:#dc2626"></span><div><b>Estado operativo</b> — la alerta vigente hoy, cambia con cada parte. <i>¿Cómo está ahora mismo?</i> Roja / Naranja / Amarilla / Normal.</div></div>
+      <div class="hrow"><span class="hb" style="background:#eab308"></span><div><b>Conectividad vial</b> — estado de las vías de acceso, para distribución. <i>¿Puedo llegar?</i> Bloqueado / Restringido / Parcial / Habilitado.</div></div>
+      <p style="margin:14px 0 0;padding:10px 12px;background:#13203450;border-radius:8px;font-size:12.5px">
+        <b>Regla de oro:</b> mira color y tamaño juntos. Un punto rojo pero pequeño = daño severo con poca gente (aluvión de montaña). Naranja pero grande = alerta menor con mucha población expuesta (Guayaquil). Para distribuir, cruza <b>Conectividad</b> (¿puedo llegar?) con el <b>tamaño</b> (¿a cuántos?).
+      </p>
+      <p style="margin:12px 0 0;font-size:12px;color:var(--muted)">
+        La <b>leyenda</b> (abajo izq.) muestra el total de posibles afectadas por categoría del modo activo y respeta el filtro. El botón <b>Resumen</b> abre la tabla por provincia. Un clic en un punto abre su ficha con afectación, conectividad y ruta alterna.
+      </p>
+    </div>
+    <div class="modal-foot"><button class="btn primary" onclick="document.getElementById('helpScrim').classList.remove('on')">Entendido</button></div>
+  </div>
+</div>
+
+<div class="scrim" id="sumScrim">
+  <div class="modal" style="width:760px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Resumen</h2>
+      <div class="sumToggle">
+        <button id="sumBtnProv" class="on" onclick="setSumView('provincia')">Por Provincia</button>
+        <button id="sumBtnReg" onclick="setSumView('region')">Por Región (Sicc)</button>
+      </div>
+    </div>
+    <div id="sumBody" style="padding:8px 16px 16px;overflow:auto"></div>
+    <div class="modal-foot"><button class="btn primary" onclick="document.getElementById('sumScrim').classList.remove('on')">Cerrar</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- colores ---------- */
+const NIVEL_COLOR={'CRÍTICO':'#ef4444','ALTO':'#f97316','MEDIO-ALTO':'#facc15','MEDIO':'#22c55e'};
+const ESTADO_COLOR={'Roja':'#dc2626','Naranja':'#f97316','Amarilla':'#eab308','Normal':'#38bdf8'};
+const CONEC_COLOR={'Bloqueado':'#dc2626','Restringido':'#f97316','Parcial':'#eab308','Habilitado':'#22c55e','Sin dato':'#5f7796'};
+const SCORE={'CRÍTICO':4,'ALTO':3,'MEDIO-ALTO':2,'MEDIO':1};
+// Clasifica el texto libre de conectividad en 4 categorías para colorear/filtrar.
+function conecCat(t){
+  t=(t||'').toLowerCase();
+  if(!t.trim()) return 'Sin dato';
+  if(t.includes('bloque')||t.includes('cerrad')) return 'Bloqueado';
+  if(t.includes('restring')||t.includes('solo ')||t.includes('un solo carril')||
+     t.includes('controlado')||t.includes('cierre')||t.includes('4x4')) return 'Restringido';
+  if(t.includes('parcial')||t.includes('precau')||t.includes('desv')||t.includes('intermit')||t.includes('tráfico')||t.includes('trafico')) return 'Parcial';
+  if(t.includes('habilitado')) return 'Habilitado';
+  return 'Restringido';
+}
+
+/* ---------- datos semilla (SNGR + ECU911 + noticias, corte 6-jul-2026) ---------- */
+const SEED=[{"id": "c10", "provincia": "Guayas", "canton": "Guayaquil", "nivel": "ALTO", "score": 3, "pct": "15% - 20%", "cuenca": true, "lat": -2.1894, "lng": -79.8894, "estado": "Amarilla", "posibles_afectadas": 16429, "consultoras_afectadas": 0, "consultoras_base": 19641, "tipo": "Acumulación hídrica estacional, tráfico detenido", "rutas": "Vía Perimetral / Av. Narcisa de Jesús", "conectividad": "", "fecha": "2026-06-30", "obs": "Colapso de alcantarillado por tormentas; transporte y servicios esenciales afectados · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1627", "1629", "1632", "1633", "1634", "1637", "1638", "1640", "1641", "1721", "1729", "1730", "1731", "1732", "1733", "1734", "1735", "1736", "1830", "1833", "1834", "1835", "2018", "2022", "2024"], "secciones_afectadas": ["1627A", "1627C", "1627D", "1627G", "1627K", "1627L", "1627M", "1627N", "1627O", "1627P", "1627Q", "1629C", "1629E", "1629J", "1629K", "1629N", "1632B", "1632D", "1632E", "1632K", "1632L", "1632N", "1632O", "1632P", "1632Q", "1632R", "1632S", "1633A", "1633B", "1633C", "1633E", "1633G", "1633I", "1633K", "1633L", "1633M", "1633N", "1634A", "1634B", "1634C", "1634D", "1634E", "1634F", "1634H", "1634I", "1634J", "1637A", "1637B", "1637C", "1637D", "1637E", "1637F", "1637G", "1637H", "1637I", "1637J", "1638A", "1638B", "1638C", "1638D", "1638E", "1638F", "1638G", "1638H", "1638I", "1638J", "1640A", "1640B", "1640C", "1640D", "1640E", "1640F", "1640G", "1640H", "1640I", "1640J", "1641I", "1721A", "1729A", "1729C", "1729D", "1729E", "1729F", "1729G", "1729H", "1729I", "1729K", "1730A", "1730B", "1730C", "1730D", "1730E", "1730F", "1730G", "1730H", "1730I", "1730J", "1730K", "1731A", "1731B", "1731C", "1731D", "1731E", "1731F", "1731G", "1731H", "1731I", "1731J", "1732A", "1732B", "1732C", "1732D", "1732F", "1732G", "1732I", "1732J", "1733A", "1733B", "1733C", "1733D", "1733E", "1733F", "1733G", "1733H", "1733I", "1733K", "1734A", "1734B", "1734C", "1734D", "1734E", "1734F", "1734G", "1734H", "1734I", "1735A", "1735B", "1735C", "1735D", "1735E", "1735F", "1735G", "1735H", "1735I", "1735J", "1736A", "1736B", "1736C", "1736D", "1736E", "1736F", "1736G", "1736H", "1736I", "1736J", "1736K", "1830C", "1830D", "1830E", "1830H", "1830I", "1833I", "1834B", "1834C", "1834D", "1834H", "1835A", "1835B", "1835C", "1835D", "1835E", "1835F", "1835G", "1835H", "1835K", "2018B", "2022F", "2024C", "2024D", "2024F"], "sicc_region": "20"}, {"id": "c51", "provincia": "Azuay", "canton": "Cuenca", "nivel": "MEDIO", "score": 1, "pct": "< 5%", "cuenca": false, "lat": -2.9006, "lng": -79.0044, "estado": "Naranja", "posibles_afectadas": 2244, "consultoras_afectadas": 0, "consultoras_base": 2801, "tipo": "Deslizamientos puntuales en el km 49 y 90", "rutas": "Vía Azogues - Biblián - Zhud", "conectividad": "Cerrado desde el km 82 hasta jurisdicción de Azuay (Cuenca-Girón-Pasaje); Cuenca-Molleturo parcial liviano <3.5t (km 101); Cuenca-Cañar-Alausí parcial", "fecha": "2026-07-06", "obs": "Conectividad vial afectada por derrumbes (Molleturo); inundaciones <5% en orillas · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1643", "1644", "1645", "1646", "2024"], "secciones_afectadas": ["1643C", "1643D", "1643G", "1643H", "1643I", "1644A", "1644B", "1644C", "1644D", "1644E", "1644F", "1644G", "1644H", "1645A", "1645B", "1645C", "1645D", "1645F", "1645G", "1645I", "1646A", "1646B", "1646C", "1646D", "1646E", "1646F", "1646G", "1646H", "1646I", "1646J", "1646K", "2024C"], "sicc_region": "20"}, {"id": "c6", "provincia": "Guayas", "canton": "Durán", "nivel": "ALTO", "score": 3, "pct": "25% - 30%", "cuenca": true, "lat": -2.1672, "lng": -79.8228, "estado": "Amarilla", "posibles_afectadas": 1770, "consultoras_afectadas": 0, "consultoras_base": 2060, "tipo": "Colapso de alcantarillado por lluvias y mareas", "rutas": "Puente Alterno Norte (PAN)", "conectividad": "", "fecha": "2026-06-30", "obs": "25-30% de zona habitada inundada de forma prolongada; transporte masivo inhabilitado · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1641", "1642", "1730", "1830"], "secciones_afectadas": ["1641A", "1641B", "1641C", "1641D", "1641E", "1641F", "1641G", "1641H", "1641I", "1641J", "1642A", "1642B", "1642C", "1642D", "1642E", "1642F", "1642G", "1642H", "1730B", "1830G"], "sicc_region": "18"}, {"id": "c23", "provincia": "Los Ríos", "canton": "Quevedo", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -1.03, "lng": -79.46, "estado": "Amarilla", "posibles_afectadas": 1662, "consultoras_afectadas": 0, "consultoras_base": 2076, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "3er cantón más propenso del país; confluencia de ríos · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2010", "2011", "2012", "2013", "2015"], "secciones_afectadas": ["2010D", "2010H", "2011A", "2011B", "2011D", "2011F", "2011G", "2011H", "2011J", "2012B", "2012C", "2012E", "2012F", "2012G", "2012K", "2012L", "2012N", "2013A", "2013B", "2013D", "2013E", "2013F", "2013H", "2013I", "2013J", "2013L", "2013M", "2015B", "2015C", "2015D", "2015E", "2015F", "2015G", "2015H", "2015I", "2015K", "2015L"], "sicc_region": "20"}, {"id": "c32", "provincia": "El Oro", "canton": "Machala", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -3.26, "lng": -79.96, "estado": "Amarilla", "posibles_afectadas": 1647, "consultoras_afectadas": 0, "consultoras_base": 1979, "tipo": "", "rutas": "", "conectividad": "Restringida hacia la sierra (Girón–Pasaje–Machala, km 82)", "fecha": "2026-06-30", "obs": "Capital provincial, baja cota · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1710", "1712", "1713", "1714", "1829"], "secciones_afectadas": ["1710B", "1710C", "1710D", "1710E", "1710G", "1710H", "1710I", "1710J", "1710K", "1710L", "1712A", "1712B", "1712C", "1712E", "1712F", "1712H", "1712I", "1712K", "1712L", "1713A", "1713B", "1713E", "1713I", "1714A", "1714B", "1714C", "1714D", "1714F", "1714H", "1714J", "1714K", "1829E"], "sicc_region": "18"}, {"id": "c17", "provincia": "Manabí", "canton": "Portoviejo", "nivel": "CRÍTICO", "score": 4, "pct": "n/d", "cuenca": false, "lat": -1.05, "lng": -80.45, "estado": "Amarilla", "posibles_afectadas": 1645, "consultoras_afectadas": 0, "consultoras_base": 1990, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "2º cantón más propenso del país; desborde río Portoviejo · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1815", "1816", "1817", "1819", "1826", "1827", "1833"], "secciones_afectadas": ["1815G", "1815I", "1815L", "1816D", "1816E", "1816F", "1816H", "1816I", "1816K", "1816L", "1816M", "1816N", "1816O", "1817A", "1817C", "1817D", "1817F", "1817G", "1817J", "1817L", "1817N", "1819Q", "1826L", "1827O", "1827P", "1827Q", "1833J"], "sicc_region": "18"}, {"id": "c4", "provincia": "Guayas", "canton": "Milagro", "nivel": "ALTO", "score": 3, "pct": "20%", "cuenca": true, "lat": -2.1286, "lng": -79.5911, "estado": "Amarilla", "posibles_afectadas": 1322, "consultoras_afectadas": 0, "consultoras_base": 1617, "tipo": "Inundación de planicies agrícolas y zonas bajas", "rutas": "Vía km 26 - Triunfo", "conectividad": "", "fecha": "2026-06-30", "obs": "15-25% de zonas agrícolas/industriales inundadas (llanura fluvial) · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2018", "2019", "2020"], "secciones_afectadas": ["2018A", "2018B", "2018C", "2018D", "2018E", "2018G", "2018J", "2019A", "2019B", "2019C", "2019D", "2019E", "2019G", "2019H", "2019I", "2020A", "2020B", "2020D", "2020E", "2020F", "2020I", "2020M"], "sicc_region": "20"}, {"id": "c35", "provincia": "Esmeraldas", "canton": "Esmeraldas", "nivel": "ALTO", "score": 3, "pct": "20%", "cuenca": false, "lat": 0.9514, "lng": -79.6539, "estado": "Amarilla", "posibles_afectadas": 1169, "consultoras_afectadas": 0, "consultoras_base": 1504, "tipo": "Desbordamiento de ríos ribereños, taludes caídos", "rutas": "Vía Quinindé - Santo Domingo", "conectividad": "Parcial: Quinindé–El Mirador–Esmeraldas (km 71) y San Mateo–Viche", "fecha": "2026-06-30", "obs": "Anegaciones en barrios ribereños; +20% de planicie urbana; taludes viales inestables · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2224", "2225", "2226"], "secciones_afectadas": ["2224A", "2224B", "2224C", "2224D", "2224E", "2224H", "2224J", "2224N", "2225F", "2226A", "2226C", "2226D", "2226E", "2226F", "2226G", "2226H", "2226I", "2226J", "2226K", "2226L"], "sicc_region": "22"}, {"id": "c24", "provincia": "Los Ríos", "canton": "Babahoyo", "nivel": "CRÍTICO", "score": 4, "pct": "45% - 50%", "cuenca": false, "lat": -1.8014, "lng": -79.5347, "estado": "Amarilla", "posibles_afectadas": 1038, "consultoras_afectadas": 0, "consultoras_base": 1299, "tipo": "Desbordamiento de ríos, pérdida de cultivos", "rutas": "Vía Jujan - Baba - Guayaquil", "conectividad": "", "fecha": "2026-06-30", "obs": "~30.000 ha de cultivos impactadas; 40-50% de superficie rural inundada por desbordes · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2016", "2017", "2021", "2022"], "secciones_afectadas": ["2016A", "2016C", "2016F", "2016G", "2016H", "2016K", "2016L", "2017A", "2017B", "2017D", "2017E", "2017G", "2017L", "2017N", "2021A", "2021B", "2021C", "2021F", "2021G", "2021I", "2022A", "2022B", "2022C", "2022D", "2022F", "2022G", "2022H"], "sicc_region": "20"}, {"id": "c18", "provincia": "Manabí", "canton": "Chone", "nivel": "CRÍTICO", "score": 4, "pct": "60%", "cuenca": false, "lat": -0.6981, "lng": -80.0936, "estado": "Amarilla", "posibles_afectadas": 710, "consultoras_afectadas": 0, "consultoras_base": 825, "tipo": "Inundación urbana total, colapso de alcantarillado", "rutas": "Vía Tosagua - Bahía - Chone", "conectividad": "", "fecha": "2026-06-30", "obs": "Emergencia permanente; +24.000 ha afectadas; hasta 60% de zona urbana anegada en picos · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1813", "1815", "1829"], "secciones_afectadas": ["1813A", "1813B", "1813C", "1813D", "1813E", "1813G", "1813I", "1813J", "1813K", "1813L", "1813M", "1815A", "1815F", "1815H", "1815J", "1829J"], "sicc_region": "18"}, {"id": "c3", "provincia": "Guayas", "canton": "Daule", "nivel": "ALTO", "score": 3, "pct": "15% - 25%", "cuenca": true, "lat": -1.8614, "lng": -79.9792, "estado": "Amarilla", "posibles_afectadas": 660, "consultoras_afectadas": 0, "consultoras_base": 764, "tipo": "Desbordamiento fluvial en zonas arroceras", "rutas": "Vía Nobol - La Cadena", "conectividad": "", "fecha": "2026-06-30", "obs": "15-25% de zonas agrícolas/industriales inundadas (llanura fluvial) · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1629", "1640", "1833", "1834", "1835"], "secciones_afectadas": ["1629N", "1640H", "1833A", "1833D", "1833E", "1833F", "1833G", "1833H", "1833I", "1834A", "1834B", "1834C", "1834D", "1834E", "1834G", "1834I", "1835B"], "sicc_region": "18"}, {"id": "c13", "provincia": "Guayas", "canton": "El Empalme", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -1.05, "lng": -79.64, "estado": "Amarilla", "posibles_afectadas": 658, "consultoras_afectadas": 0, "consultoras_base": 821, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Notificado por descargas Daule-Peripa · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2012"], "secciones_afectadas": ["2012B", "2012C", "2012E", "2012F", "2012G", "2012H", "2012I", "2012K", "2012N", "2012O"], "sicc_region": "20"}, {"id": "c30", "provincia": "El Oro", "canton": "Santa Rosa", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": true, "lat": -3.45, "lng": -79.96, "estado": "Naranja", "posibles_afectadas": 625, "consultoras_afectadas": 0, "consultoras_base": 766, "tipo": "", "rutas": "", "conectividad": "Afectada corredor Pasaje-Santa Rosa", "fecha": "2026-07-06", "obs": "Cuenca crónica; evento detonante de 1997 · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1713", "1714"], "secciones_afectadas": ["1713B", "1713C", "1713O", "1714A", "1714B", "1714C", "1714D", "1714E", "1714J", "1714K"], "sicc_region": "17", "noticia": {"resumen": "El mismo desborde del río Buenavista afectó la parroquia La Victoria, cantón Santa Rosa, el 9 de junio: cerca de 40 familias (120 personas) resultaron afectadas mientras se evaluaban los daños. No se reportaron heridos ni fallecidos.", "fuente": "El Universo", "fecha": "2026-06-09", "url": "https://www.eluniverso.com/noticias/ecuador/lluvias-en-el-oro-60-de-barrios-machala-con-acumulacion-de-agua-mientras-rio-buenavista-se-desbordo-en-pasaje-nota/"}}, {"id": "c7", "provincia": "Guayas", "canton": "Naranjal", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": true, "lat": -2.67, "lng": -79.62, "estado": "Amarilla", "posibles_afectadas": 469, "consultoras_afectadas": 0, "consultoras_base": 586, "tipo": "", "rutas": "Cuenca–Molleturo–Naranjal: alterna El Triunfo–La Troncal–Cochancay", "conectividad": "Cuenca–Molleturo–Naranjal parcial (livianos <3,5t)", "fecha": "2026-06-30", "obs": "Cuenca de recurrencia crónica · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1642", "2018", "2020", "2024"], "secciones_afectadas": ["1642C", "2018G", "2018L", "2020J", "2020L", "2024A", "2024B", "2024C", "2024D", "2024E", "2024K", "2024N"], "sicc_region": "20"}, {"id": "c44", "provincia": "Santo Domingo", "canton": "La Concordia", "nivel": "ALTO", "score": 3, "pct": "10%", "cuenca": false, "lat": 0.0039, "lng": -79.3881, "estado": "Amarilla", "posibles_afectadas": 467, "consultoras_afectadas": 0, "consultoras_base": 651, "tipo": "Hundimiento de mesas de la vía principal", "rutas": "Vía Puerto Quito - Calacalí", "conectividad": "", "fecha": "2026-06-30", "obs": "Anegaciones severas; inestabilidad de taludes hacia la sierra; +20% de planicie urbana · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2225"], "secciones_afectadas": ["2225G", "2225H", "2225I", "2225J", "2225K", "2225M"], "sicc_region": "22"}, {"id": "c2", "provincia": "Guayas", "canton": "San Jacinto de Yaguachi", "nivel": "CRÍTICO", "score": 4, "pct": "~97,86%", "cuenca": true, "lat": -2.11, "lng": -79.65, "estado": "Amarilla", "posibles_afectadas": 449, "consultoras_afectadas": 0, "consultoras_base": 560, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Top-5 nacional por superficie inundable · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2020"], "secciones_afectadas": ["2020E", "2020F", "2020I", "2020M"], "sicc_region": "20"}, {"id": "c25", "provincia": "Los Ríos", "canton": "Vinces", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -1.55, "lng": -79.74, "estado": "Amarilla", "posibles_afectadas": 441, "consultoras_afectadas": 0, "consultoras_base": 562, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Cantón en riesgo según SNGR · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2017"], "secciones_afectadas": ["2017A", "2017B", "2017D", "2017E", "2017F", "2017G", "2017H"], "sicc_region": "20"}, {"id": "c5", "provincia": "Guayas", "canton": "Samborondón", "nivel": "ALTO", "score": 3, "pct": ">80%", "cuenca": true, "lat": -1.96, "lng": -79.72, "estado": "Amarilla", "posibles_afectadas": 436, "consultoras_afectadas": 0, "consultoras_base": 701, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "15-25% de zonas agrícolas/industriales inundadas (llanura fluvial) · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1629", "1830"], "secciones_afectadas": ["1629I", "1629J", "1629K", "1629N", "1629O", "1629P", "1629Q", "1830A"], "sicc_region": "18"}, {"id": "c34", "provincia": "El Oro", "canton": "Pasaje", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -3.33, "lng": -79.81, "estado": "Naranja", "posibles_afectadas": 408, "consultoras_afectadas": 0, "consultoras_base": 514, "tipo": "", "rutas": "", "conectividad": "Cerrada Cuenca-Girón-Pasaje (km 82) y Pasaje-Santa Rosa", "fecha": "2026-07-06", "obs": "Cantón en riesgo según SNGR · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1713"], "secciones_afectadas": ["1713A", "1713B", "1713C", "1713D", "1713E"], "sicc_region": "17", "noticia": {"resumen": "El desborde del río Buenavista inundó sectores de Pasaje el 9 de junio; una vivienda resultó afectada y una familia fue evacuada. El corredor Cuenca–Girón–Pasaje permanece cerrado desde el km 82.", "fuente": "El Universo", "fecha": "2026-06-09", "url": "https://www.eluniverso.com/noticias/ecuador/lluvias-en-el-oro-60-de-barrios-machala-con-acumulacion-de-agua-mientras-rio-buenavista-se-desbordo-en-pasaje-nota/"}}, {"id": "c9", "provincia": "Guayas", "canton": "Playas (Villamil)", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -2.63, "lng": -80.39, "estado": "Amarilla", "posibles_afectadas": 380, "consultoras_afectadas": 0, "consultoras_base": 458, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Entre los más afectados en 2024 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1830"], "secciones_afectadas": ["1830A", "1830B", "1830C", "1830D", "1830G", "1830H"], "sicc_region": "18"}, {"id": "c33", "provincia": "El Oro", "canton": "El Guabo", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -3.24, "lng": -79.83, "estado": "Amarilla", "posibles_afectadas": 350, "consultoras_afectadas": 0, "consultoras_base": 441, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Cantón en riesgo según SNGR · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1712", "1713"], "secciones_afectadas": ["1712M", "1713F", "1713H", "1713I"], "sicc_region": "17"}, {"id": "c47", "provincia": "Manabí", "canton": "Pedernales", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": 0.073, "lng": -80.052, "estado": "Amarilla", "posibles_afectadas": 346, "consultoras_afectadas": 0, "consultoras_base": 436, "tipo": "", "rutas": "", "conectividad": "Parcial Chamanga-Pedernales", "fecha": "2026-07-06", "obs": "Deslizamientos recurrentes; desbordes breves de esteros locales · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1813", "1829"], "secciones_afectadas": ["1813G", "1829J", "1829N", "1829O"], "sicc_region": "18"}, {"id": "c14", "provincia": "Guayas", "canton": "Balzar", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -1.36, "lng": -79.9, "estado": "Amarilla", "posibles_afectadas": 310, "consultoras_afectadas": 0, "consultoras_base": 378, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Notificado por descargas Daule-Peripa · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2012"], "secciones_afectadas": ["2012H", "2012K", "2012L"], "sicc_region": "20"}, {"id": "c1", "provincia": "Guayas", "canton": "Alfredo Baquerizo Moreno (Jujan)", "nivel": "CRÍTICO", "score": 4, "pct": "35% - 45%", "cuenca": true, "lat": -1.8906, "lng": -79.5422, "estado": "Amarilla", "posibles_afectadas": 241, "consultoras_afectadas": 0, "consultoras_base": 296, "tipo": "Anegación vial interprovincial, comercio detenido", "rutas": "Vía Simón Bolívar - Maridueña", "conectividad": "", "fecha": "2026-06-30", "obs": "Máx. exposición socioeconómica; 35-45% de zona urbana/periférica anegada; comercio y movilidad detenidos · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2021"], "secciones_afectadas": ["2021E", "2021I"], "sicc_region": "20"}, {"id": "c26", "provincia": "Los Ríos", "canton": "Baba", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -1.78, "lng": -79.67, "estado": "Amarilla", "posibles_afectadas": 218, "consultoras_afectadas": 0, "consultoras_base": 274, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Entre los cantones más afectados en 2024 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2017", "2021"], "secciones_afectadas": ["2017G", "2017H", "2021F"], "sicc_region": "20"}, {"id": "c29", "provincia": "Los Ríos", "canton": "Mocache", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -1.18, "lng": -79.5, "estado": "Amarilla", "posibles_afectadas": 212, "consultoras_afectadas": 0, "consultoras_base": 281, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Cantón en riesgo según SNGR · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2015"], "secciones_afectadas": ["2015F", "2015H"], "sicc_region": "20"}, {"id": "c19", "provincia": "Manabí", "canton": "Santa Ana", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -1.21, "lng": -80.37, "estado": "Amarilla", "posibles_afectadas": 211, "consultoras_afectadas": 0, "consultoras_base": 259, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Desborde río Grande/Portoviejo (2024) · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1816"], "secciones_afectadas": ["1816H", "1816I", "1816P"], "sicc_region": "18"}, {"id": "c31", "provincia": "El Oro", "canton": "Arenillas", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": true, "lat": -3.55, "lng": -80.07, "estado": "Amarilla", "posibles_afectadas": 200, "consultoras_afectadas": 0, "consultoras_base": 243, "tipo": "", "rutas": "", "conectividad": "Parcialmente habilitada Alamor–Arenillas (hundimiento, sector Cochurcho)", "fecha": "2026-06-30", "obs": "Cuenca de recurrencia crónica · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1714"], "secciones_afectadas": ["1714F", "1714H", "1714L"], "sicc_region": "17"}, {"id": "c22", "provincia": "Manabí", "canton": "Pichincha (Manabí)", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -1.04, "lng": -79.92, "estado": "Amarilla", "posibles_afectadas": 194, "consultoras_afectadas": 0, "consultoras_base": 261, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Notificado por descargas de presa · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2010", "2012"], "secciones_afectadas": ["2010A", "2012G"], "sicc_region": "20"}, {"id": "c16", "provincia": "Guayas", "canton": "Nobol", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": true, "lat": -1.91, "lng": -80.01, "estado": "Amarilla", "posibles_afectadas": 172, "consultoras_afectadas": 0, "consultoras_base": 220, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Notificado por descargas Daule-Peripa · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1833"], "secciones_afectadas": ["1833A", "1833G"], "sicc_region": "18"}, {"id": "c15", "provincia": "Guayas", "canton": "Santa Lucía", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": true, "lat": -1.73, "lng": -80.01, "estado": "Amarilla", "posibles_afectadas": 162, "consultoras_afectadas": 0, "consultoras_base": 206, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Notificado por descargas Daule-Peripa · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1834"], "secciones_afectadas": ["1834E", "1834G", "1834I"], "sicc_region": "18"}, {"id": "c48", "provincia": "Bolívar", "canton": "Guaranda", "nivel": "MEDIO-ALTO", "score": 2, "pct": "0% (Montaña)", "cuenca": false, "lat": -1.5925, "lng": -79.0019, "estado": "Amarilla", "posibles_afectadas": 160, "consultoras_afectadas": 0, "consultoras_base": 201, "tipo": "Movimientos en masa que bloquean la red estatal", "rutas": "Vía Ambato - Guaranda", "conectividad": "", "fecha": "2026-06-30", "obs": "Movimientos en masa que bloquean la red vial interprovincial · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2013", "2016", "2128"], "secciones_afectadas": ["2013I", "2016L", "2128E", "2128F", "2128G"], "sicc_region": "21"}, {"id": "c27", "provincia": "Los Ríos", "canton": "Palenque", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -1.54, "lng": -79.91, "estado": "Amarilla", "posibles_afectadas": 150, "consultoras_afectadas": 0, "consultoras_base": 181, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Cantón en riesgo según SNGR · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2017"], "secciones_afectadas": ["2017E"], "sicc_region": "20"}, {"id": "c11", "provincia": "Guayas", "canton": "Colimes", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": true, "lat": -1.62, "lng": -80.0, "estado": "Amarilla", "posibles_afectadas": 144, "consultoras_afectadas": 0, "consultoras_base": 180, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Desbordamiento del río Daule (2024) · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1834"], "secciones_afectadas": ["1834C", "1834H"], "sicc_region": "18"}, {"id": "c0", "provincia": "Guayas", "canton": "Salitre", "nivel": "CRÍTICO", "score": 4, "pct": "~99,93%", "cuenca": true, "lat": -1.85, "lng": -79.78, "estado": "Amarilla", "posibles_afectadas": 357, "consultoras_afectadas": 0, "consultoras_base": 293, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Mayor área inundable del país · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1629", "1834"], "secciones_afectadas": ["1629I", "1629K", "1629N", "1629P", "1629Q", "1834D", "1834G", "1834I", "1834K"], "sicc_region": "18"}, {"id": "c46", "provincia": "Manabí", "canton": "Flavio Alfaro", "nivel": "MEDIO-ALTO", "score": 2, "pct": "5%", "cuenca": false, "lat": -0.4047, "lng": -80.0886, "estado": "Amarilla", "posibles_afectadas": 136, "consultoras_afectadas": 0, "consultoras_base": 165, "tipo": "Deslizamientos de tierra en vías secundarias", "rutas": "Vía El Carmen - Chone", "conectividad": "", "fecha": "2026-06-30", "obs": "Deslizamientos recurrentes en caminos vecinales; desbordes breves de esteros · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1813", "1829"], "secciones_afectadas": ["1813G", "1829E"], "sicc_region": "18"}, {"id": "c42", "provincia": "El Oro", "canton": "Zaruma", "nivel": "CRÍTICO", "score": 4, "pct": "0% (Montaña)", "cuenca": false, "lat": -3.6917, "lng": -79.6125, "estado": "Amarilla", "posibles_afectadas": 132, "consultoras_afectadas": 0, "consultoras_base": 159, "tipo": "Aluviones urbanos, hundimiento de suelo", "rutas": "Vía Piñas - Machala", "conectividad": "", "fecha": "2026-06-30", "obs": "Estado de emergencia; aluviones severos (parr. Salvias); pérdida de conectividad y viviendas · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1713"], "secciones_afectadas": ["1713B", "1713N", "1713P"], "sicc_region": "17"}, {"id": "c8", "provincia": "Guayas", "canton": "Balao", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -2.92, "lng": -79.82, "estado": "Amarilla", "posibles_afectadas": 118, "consultoras_afectadas": 0, "consultoras_base": 146, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Históricamente vulnerable · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2024"], "secciones_afectadas": ["2024E"], "sicc_region": "20"}, {"id": "c21", "provincia": "Manabí", "canton": "Rocafuerte", "nivel": "MEDIO-ALTO", "score": 2, "pct": "15%", "cuenca": false, "lat": -0.9236, "lng": -80.4594, "estado": "Amarilla", "posibles_afectadas": 105, "consultoras_afectadas": 0, "consultoras_base": 132, "tipo": "Afectación agrícola por desborde de canales", "rutas": "Vía Portoviejo - Crucita", "conectividad": "Parcial Rocafuerte-Tosagua (socavón km 187)", "fecha": "2026-07-06", "obs": "+11.000 ha de cultivos con afectación media; ~15% de tierras bajas inundadas · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1815"], "secciones_afectadas": ["1815H"], "sicc_region": "18"}, {"id": "c36", "provincia": "Esmeraldas", "canton": "Muisne", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": 0.61, "lng": -80.02, "estado": "Amarilla", "posibles_afectadas": 94, "consultoras_afectadas": 0, "consultoras_base": 110, "tipo": "", "rutas": "", "conectividad": "Parcialmente habilitada Y del Salto–Chamanga (desbordamiento río Sucio)", "fecha": "2026-06-30", "obs": "Inundaciones en partes bajas de cuenca (97-98) · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2224"], "secciones_afectadas": ["2224E", "2224L"], "sicc_region": "22"}, {"id": "c37", "provincia": "Esmeraldas", "canton": "Rioverde", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": 1.06, "lng": -79.4, "estado": "Amarilla", "posibles_afectadas": 75, "consultoras_afectadas": 0, "consultoras_base": 99, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Inundaciones en partes bajas de cuenca (97-98) · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2226"], "secciones_afectadas": ["2226J"], "sicc_region": "22"}, {"id": "c54", "provincia": "Loja", "canton": "Celica", "nivel": "MEDIO", "score": 1, "pct": "0% (Montaña)", "cuenca": false, "lat": -4.1031, "lng": -79.9556, "estado": "Naranja", "posibles_afectadas": 68, "consultoras_afectadas": 0, "consultoras_base": 84, "tipo": "Reactivación de fallas geológicas por humedad", "rutas": "Vía Catamayo - Gonzanamá - Cariamanga", "conectividad": "Paso restringido a pesados (COE cantonal); vía alterna El Empalme-Macará-Saucillo-Sabanilla-Pindal parcial", "fecha": "2026-07-06", "obs": "Emergencia en periferia urbana; restricción a transporte pesado por fallas geológicas · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1720"], "secciones_afectadas": ["1720O"], "sicc_region": "17"}, {"id": "c55", "provincia": "Loja", "canton": "Puyango", "nivel": "MEDIO", "score": 1, "pct": "0% (Montaña)", "cuenca": false, "lat": -3.9931, "lng": -80.0194, "estado": "Amarilla", "posibles_afectadas": 68, "consultoras_afectadas": 0, "consultoras_base": 88, "tipo": "Deslizamientos en accesos rurales, lodo en vías", "rutas": "Vía Alamor - Arenillas", "conectividad": "Parcial Alamor–Arenillas; Celica–Alamor restringido a pesados", "fecha": "2026-06-30", "obs": "Emergencia; restricción de transporte por fallas geológicas reactivadas · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1720", "2205"], "secciones_afectadas": ["1720L", "2205Q"], "sicc_region": "22"}, {"id": "c53", "provincia": "Azuay", "canton": "Santa Isabel", "nivel": "MEDIO", "score": 1, "pct": "< 5%", "cuenca": false, "lat": -3.2756, "lng": -79.315, "estado": "Naranja", "posibles_afectadas": 67, "consultoras_afectadas": 0, "consultoras_base": 77, "tipo": "Pérdida parcial de calzada por desborde de ríos", "rutas": "Vía Girón - Pasaje", "conectividad": "Corredor Cuenca-Girón-Pasaje cerrado desde el km 82", "fecha": "2026-07-06", "obs": "Derrumbes; conectividad vial intermitente · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1645"], "secciones_afectadas": ["1645G"], "sicc_region": "16"}, {"id": "c58", "provincia": "Cotopaxi", "canton": "Pangua", "nivel": "MEDIO", "score": 1, "pct": "5%", "cuenca": false, "lat": -1.1197, "lng": -79.0622, "estado": "Amarilla", "posibles_afectadas": 67, "consultoras_afectadas": 0, "consultoras_base": 88, "tipo": "Desbordamiento de esteros en zonas bajas subtropicales", "rutas": "Vía La Maná - Latacunga", "conectividad": "", "fecha": "2026-06-30", "obs": "Erosión hídrica; pequeños deslizamientos que interrumpen transporte secundario · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2013"], "secciones_afectadas": ["2013I"], "sicc_region": "20"}, {"id": "c57", "provincia": "Carchi", "canton": "Tulcán", "nivel": "MEDIO", "score": 1, "pct": "0% (Urbano)", "cuenca": false, "lat": 0.8119, "lng": -77.7175, "estado": "Amarilla", "posibles_afectadas": 63, "consultoras_afectadas": 0, "consultoras_base": 92, "tipo": "Granizadas severas, colapso de techos e imbornales", "rutas": "Panamericana Norte", "conectividad": "", "fecha": "2026-06-30", "obs": "Erosión hídrica, granizadas; deslizamientos menores en vías secundarias · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2214"], "secciones_afectadas": ["2214N", "2214O", "2214P", "2214R"], "sicc_region": "22"}, {"id": "c20", "provincia": "Manabí", "canton": "Tosagua", "nivel": "ALTO", "score": 3, "pct": "n/d", "cuenca": false, "lat": -0.79, "lng": -80.23, "estado": "Amarilla", "posibles_afectadas": 59, "consultoras_afectadas": 0, "consultoras_base": 77, "tipo": "", "rutas": "Rocafuerte–Tosagua: alterna Canuto–Calceta", "conectividad": "Parcial Rocafuerte-Tosagua y Tosagua-Bahía (km 5, sector Verdún)", "fecha": "2026-07-06", "obs": "Cantón en riesgo según SNGR · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1815"], "secciones_afectadas": ["1815J"], "sicc_region": "18"}, {"id": "c12", "provincia": "Guayas", "canton": "Palestina", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": true, "lat": -1.96, "lng": -79.89, "estado": "Amarilla", "posibles_afectadas": 53, "consultoras_afectadas": 0, "consultoras_base": 73, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Desborde río Daule; descargas de presa · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1834"], "secciones_afectadas": ["1834C"], "sicc_region": "18"}, {"id": "c39", "provincia": "Tungurahua", "canton": "Baños de Agua Santa", "nivel": "CRÍTICO", "score": 4, "pct": "< 5%", "cuenca": false, "lat": -1.3964, "lng": -78.4247, "estado": "Amarilla", "posibles_afectadas": 45, "consultoras_afectadas": 0, "consultoras_base": 58, "tipo": "Aluviones, pérdida de puentes y calzada vial", "rutas": "Vía Quito - Baeza - Tena - Puyo", "conectividad": "", "fecha": "2026-06-30", "obs": "Zona cero Sierra centro; aluviones, puentes estatales destruidos, tramos de vía principal perdidos · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2116", "2118"], "secciones_afectadas": ["2116G", "2118G"], "sicc_region": "21"}, {"id": "c52", "provincia": "Azuay", "canton": "Girón", "nivel": "MEDIO", "score": 1, "pct": "< 5%", "cuenca": false, "lat": -3.1611, "lng": -79.1469, "estado": "Naranja", "posibles_afectadas": 29, "consultoras_afectadas": 0, "consultoras_base": 39, "tipo": "Caída de rocas y detritos en calzada estatal", "rutas": "Vía Cuenca - Pasaje", "conectividad": "Cerrada Cuenca-Girón-Pasaje desde el km 82", "fecha": "2026-07-06", "obs": "Derrumbes en zonas inestables; comunidades aisladas temporalmente · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1645"], "secciones_afectadas": ["1645G"], "sicc_region": "16"}, {"id": "c28", "provincia": "Los Ríos", "canton": "Pueblo Viejo", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -1.55, "lng": -79.53, "estado": "Amarilla", "posibles_afectadas": 297, "consultoras_afectadas": 0, "consultoras_base": 383, "tipo": "", "rutas": "", "conectividad": "", "fecha": "2026-06-30", "obs": "Cantón en riesgo según SNGR · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2016", "2017"], "secciones_afectadas": ["2016D", "2017L", "2017N"], "sicc_region": "20"}, {"id": "c41", "provincia": "Chimborazo", "canton": "Alausí", "nivel": "CRÍTICO", "score": 4, "pct": "0% (Montaña)", "cuenca": false, "lat": -2.2014, "lng": -78.8475, "estado": "Amarilla", "posibles_afectadas": 20, "consultoras_afectadas": 0, "consultoras_base": 30, "tipo": "Deslizamientos de tierra masivos, falla geológica", "rutas": "Vía Guamote - Macas - Puyo", "conectividad": "Parcial Cuenca-Cañar-Alausí (sector El Rocío); parcial Riobamba-Alausí-Chunchi", "fecha": "2026-07-06", "obs": "Deslizamientos históricos de gran magnitud; carreteras, viviendas y vehículos arrasados · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2018", "2129"], "secciones_afectadas": ["2018G", "2129E"], "sicc_region": "21"}, {"id": "c38", "provincia": "Santa Elena", "canton": "Santa Elena", "nivel": "MEDIO-ALTO", "score": 2, "pct": "10%", "cuenca": false, "lat": -2.2264, "lng": -80.8583, "estado": "Amarilla", "posibles_afectadas": 1291, "consultoras_afectadas": 0, "consultoras_base": 1585, "tipo": "Escorrentías superficiales, badenes inundados", "rutas": "Vía la Costa (Progreso)", "conectividad": "", "fecha": "2026-06-30", "obs": "Escorrentías e inundaciones en comunas bajas; lluvias inusualmente intensas · Estado: Amarilla preventiva SNGR-117 (18-may-2026)· Incluye parroquia Colonche: Inundaciones en comunas bajas por escorrentías · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1830", "1832"], "secciones_afectadas": ["1830F", "1830F", "1830H", "1832A", "1832A", "1832B", "1832B", "1832C", "1832C", "1832D", "1832D", "1832E", "1832F", "1832K", "1832L"], "sicc_region": "18"}, {"id": "c43", "provincia": "El Oro", "canton": "Portovelo", "nivel": "CRÍTICO", "score": 4, "pct": "10% (Riberas)", "cuenca": false, "lat": -3.7178, "lng": -79.6167, "estado": "Amarilla", "posibles_afectadas": 11, "consultoras_afectadas": 0, "consultoras_base": 13, "tipo": "Desbordamiento de ríos de montaña, pérdida de vías", "rutas": "Vía El Cisne - Loja", "conectividad": "Parcial Portovelo-Salatí", "fecha": "2026-07-06", "obs": "Estado de emergencia; aluviones severos; viviendas destruidas y vías cortadas · Fuente: ECU 911 (vía consultasecuador.com), 29-jun-2026 · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["1713"], "secciones_afectadas": ["1713N", "1713P"], "sicc_region": "17"}, {"id": "c56", "provincia": "Chimborazo", "canton": "Pallatanga", "nivel": "MEDIO", "score": 1, "pct": "0% (Montaña)", "cuenca": false, "lat": -1.9875, "lng": -78.9664, "estado": "Amarilla", "posibles_afectadas": 10, "consultoras_afectadas": 0, "consultoras_base": 11, "tipo": "Pérdida estructural de calzada y colapso de muros", "rutas": "Vía Guaranda - Riobamba", "conectividad": "", "fecha": "2026-06-30", "obs": "Emergencia local; daños en servicios básicos y vías vecinales · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2018"], "secciones_afectadas": ["2018G"], "sicc_region": "20"}, {"id": "c49", "provincia": "Bolívar", "canton": "Chillanes", "nivel": "MEDIO-ALTO", "score": 2, "pct": "0% (Montaña)", "cuenca": false, "lat": -1.9442, "lng": -79.0664, "estado": "Amarilla", "posibles_afectadas": 9, "consultoras_afectadas": 0, "consultoras_base": 12, "tipo": "Pérdida de caminos vecinales y conectividad rural", "rutas": "Vía Bucay - Chillanes", "conectividad": "", "fecha": "2026-06-30", "obs": "Movimientos en masa que bloquean tramos viales · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2022", "2128"], "secciones_afectadas": ["2022G", "2128H"], "sicc_region": "21"}, {"id": "c40", "provincia": "Chimborazo", "canton": "Penipe", "nivel": "CRÍTICO", "score": 4, "pct": "0% (Montaña)", "cuenca": false, "lat": -1.5656, "lng": -78.5322, "estado": "Amarilla", "posibles_afectadas": 1, "consultoras_afectadas": 0, "consultoras_base": 2, "tipo": "Aluviones, descenso de lahar/lodo, puentes destruidos", "rutas": "Vía Riobamba - Baños (variante interna)", "conectividad": "", "fecha": "2026-06-30", "obs": "Zona cero Sierra centro; aluviones masivos, destrucción de puentes y red vial · Estado: Amarilla preventiva SNGR-117 (18-may-2026)", "zonas_afectadas": ["2128"], "secciones_afectadas": ["2128C"], "sicc_region": "21"}, {"id": "n0", "provincia": "El Oro", "canton": "Balsas", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.7669, "lng": -79.8431, "estado": "Amarilla", "posibles_afectadas": 24, "consultoras_afectadas": 0, "consultoras_base": 25, "tipo": "", "rutas": "", "conectividad": "Parcial Balsas-Río Pindo (sitio Guerras)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1713", "1714"], "secciones_afectadas": ["1713O", "1714B"], "sicc_region": "17"}, {"id": "n1", "provincia": "Loja", "canton": "Saraguro", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.6206, "lng": -79.2356, "estado": "Amarilla", "posibles_afectadas": 87, "consultoras_afectadas": 0, "consultoras_base": 105, "tipo": "", "rutas": "", "conectividad": "Parcial Loja-Saraguro (hundimiento de calzada km 13)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1721"], "secciones_afectadas": ["1721K"], "sicc_region": "17"}, {"id": "n2", "provincia": "Loja", "canton": "Paltas", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -4.05, "lng": -79.65, "estado": "Amarilla", "posibles_afectadas": 61, "consultoras_afectadas": 0, "consultoras_base": 67, "tipo": "", "rutas": "", "conectividad": "Parcial Catacocha-El Empalme-Lucarqui y Velacruz-Catacocha", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1721"], "secciones_afectadas": ["1721J"], "sicc_region": "17"}, {"id": "n3", "provincia": "Loja", "canton": "Sozoranga", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -4.3167, "lng": -79.79, "estado": "Amarilla", "posibles_afectadas": 3, "consultoras_afectadas": 0, "consultoras_base": 3, "tipo": "", "rutas": "Sozoranga–Macará: alterna Catamayo–Gonzanamá–Cariamanga–Sozoranga–Macará", "conectividad": "Parcial Cariamanga-Sozoranga y Sozoranga-Macará/Pénjamo", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1720"], "secciones_afectadas": ["1720K"], "sicc_region": "17"}, {"id": "n4", "provincia": "Loja", "canton": "Calvas", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -4.3333, "lng": -79.55, "estado": "Amarilla", "posibles_afectadas": 104, "consultoras_afectadas": 0, "consultoras_base": 134, "tipo": "", "rutas": "Cariamanga: alterna Catamayo–Gonzanamá–Cariamanga–Sozoranga–Macará", "conectividad": "Parcial Cariamanga–Sozoranga y Cariamanga–Espíndola (deslizamientos)", "fecha": "2026-06-30", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1720"], "secciones_afectadas": ["1720G", "1720M"], "sicc_region": "17"}, {"id": "n5", "provincia": "Loja", "canton": "Espíndola", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -4.5333, "lng": -79.4333, "estado": "Amarilla", "posibles_afectadas": 21, "consultoras_afectadas": 0, "consultoras_base": 26, "tipo": "", "rutas": "", "conectividad": "Parcial Cariamanga-Espíndola (sector San Antonio-Macaicanza)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1720"], "secciones_afectadas": ["1720M"], "sicc_region": "17"}, {"id": "n6", "provincia": "Loja", "canton": "Chaguarpamba", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.9167, "lng": -79.6333, "estado": "Amarilla", "posibles_afectadas": 35, "consultoras_afectadas": 0, "consultoras_base": 42, "tipo": "", "rutas": "", "conectividad": "Parcial Olmedo-Chaguarpamba", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1721"], "secciones_afectadas": ["1721J"], "sicc_region": "17"}, {"id": "n7", "provincia": "Esmeraldas", "canton": "Quinindé", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": 0.3167, "lng": -79.4667, "estado": "Amarilla", "posibles_afectadas": 618, "consultoras_afectadas": 0, "consultoras_base": 687, "tipo": "", "rutas": "", "conectividad": "Parcial Quinindé-El Mirador-Esmeraldas (km 71)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["2225"], "secciones_afectadas": ["2225A", "2225B", "2225C", "2225D", "2225E", "2225F", "2225H", "2225I", "2225J", "2225K", "2225L"], "sicc_region": "22"}, {"id": "n8", "provincia": "Manabí", "canton": "Bolívar (Calceta)", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -0.85, "lng": -80.1667, "estado": "Amarilla", "posibles_afectadas": 210, "consultoras_afectadas": 0, "consultoras_base": 271, "tipo": "", "rutas": "Canuto–Calceta: alterna San Plácido–San Sebastián", "conectividad": "Parcial Canuto-Calceta", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1813", "2214"], "secciones_afectadas": ["1813J", "1813L", "2214R"], "sicc_region": "22"}, {"id": "n9", "provincia": "Manabí", "canton": "Jipijapa", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -1.3486, "lng": -80.5786, "estado": "Amarilla", "posibles_afectadas": 246, "consultoras_afectadas": 0, "consultoras_base": 316, "tipo": "", "rutas": "", "conectividad": "Parcial Jipijapa-La Cadena (km 75, sitio Cañita)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 29-jun-2026", "zonas_afectadas": ["1819", "1827", "1833"], "secciones_afectadas": ["1819A", "1819Q", "1827O", "1827P", "1827Q", "1833J"], "sicc_region": "18"}, {"id": "m0", "provincia": "Loja", "canton": "Loja", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.9931, "lng": -79.2042, "estado": "Amarilla", "posibles_afectadas": 1304, "consultoras_afectadas": 0, "consultoras_base": 1531, "tipo": "", "rutas": "", "conectividad": "Parcial Loja-Malacatos y Loja-Saraguro (sector Cenén km 13)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 30-jun-2026", "zonas_afectadas": ["1720", "1721", "1722"], "secciones_afectadas": ["1720B", "1720D", "1720G", "1720I", "1720J", "1720L", "1720M", "1720O", "1721A", "1721E", "1721G", "1721H", "1721I", "1721K", "1721M", "1721N", "1721O", "1722A", "1722B", "1722C", "1722E", "1722F", "1722G", "1722H", "1722I", "1722L", "1722M"], "sicc_region": "17"}, {"id": "m1", "provincia": "Loja", "canton": "Macará", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -4.3792, "lng": -79.9456, "estado": "Amarilla", "posibles_afectadas": 52, "consultoras_afectadas": 0, "consultoras_base": 61, "tipo": "", "rutas": "Alterna Catamayo–Gonzanamá–Cariamanga–Sozoranga–Macará", "conectividad": "Parcial Sozoranga-Macará/Pénjamo", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 30-jun-2026", "zonas_afectadas": ["1720"], "secciones_afectadas": ["1720K"], "sicc_region": "17"}, {"id": "m2", "provincia": "Cañar", "canton": "Cañar", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -2.5589, "lng": -78.9389, "estado": "Amarilla", "posibles_afectadas": 145, "consultoras_afectadas": 0, "consultoras_base": 179, "tipo": "", "rutas": "", "conectividad": "Parcial Cuenca-Cañar-Alausí (sector El Rocío)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 30-jun-2026", "zonas_afectadas": ["1643", "2020", "2024"], "secciones_afectadas": ["1643D", "1643J", "2020J", "2024L"], "sicc_region": "20"}, {"id": "m3", "provincia": "Cotopaxi", "canton": "Pujilí", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -0.9575, "lng": -78.6997, "estado": "Amarilla", "posibles_afectadas": 78, "consultoras_afectadas": 0, "consultoras_base": 102, "tipo": "", "rutas": "", "conectividad": "Parcial Zumbahua-Latacunga (sector Tingo/Tacajalo km 106)", "fecha": "2026-07-06", "obs": "Cantón nuevo afectado · Detectado por ECU 911 (vía consultasecuador.com), 30-jun-2026", "zonas_afectadas": ["2111"], "secciones_afectadas": ["2111G", "2111O"], "sicc_region": "21"}, {"id": "am_santiago", "provincia": "Morona Santiago", "canton": "Santiago", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -2.7167, "lng": -78.3833, "estado": "Amarilla", "posibles_afectadas": 82, "consultoras_afectadas": 0, "consultoras_base": 94, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Méndez-Guarumales-Cuenca (deslizamientos, corredor Amazonía-Sierra)", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2116"], "secciones_afectadas": ["2116M"], "sicc_region": "21"}, {"id": "am_gualaquiza", "provincia": "Morona Santiago", "canton": "Gualaquiza", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.4, "lng": -78.5667, "estado": "Amarilla", "posibles_afectadas": 76, "consultoras_afectadas": 0, "consultoras_base": 92, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Gualaquiza-Chiguinda-Sigsig-Cuenca", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["1722"], "secciones_afectadas": ["1722G"], "sicc_region": "17"}, {"id": "am_san_juan_bosco", "provincia": "Morona Santiago", "canton": "San Juan Bosco", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.25, "lng": -78.15, "estado": "Amarilla", "posibles_afectadas": 4, "consultoras_afectadas": 0, "consultoras_base": 6, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Limón-San Juan Bosco y San Juan Bosco-Gualaquiza", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2116"], "secciones_afectadas": ["2116M"], "sicc_region": "21"}, {"id": "am_limón_indanza", "provincia": "Morona Santiago", "canton": "Limón Indanza", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.0, "lng": -78.3667, "estado": "Amarilla", "posibles_afectadas": 28, "consultoras_afectadas": 0, "consultoras_base": 37, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Bella Unión-Limón, Limón-San Juan Bosco y Limón-Gualaceo", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2116"], "secciones_afectadas": ["2116M"], "sicc_region": "21"}, {"id": "am_morona", "provincia": "Morona Santiago", "canton": "Morona", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -2.3072, "lng": -78.1156, "estado": "Amarilla", "posibles_afectadas": 203, "consultoras_afectadas": 0, "consultoras_base": 250, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Macas-Riobamba (sector Cascada Macabea / Lagunas de Atillo)", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2116"], "secciones_afectadas": ["2116H", "2116I", "2116K", "2116M"], "sicc_region": "21"}, {"id": "am_gualaceo", "provincia": "Azuay", "canton": "Gualaceo", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -2.8903, "lng": -78.7778, "estado": "Amarilla", "posibles_afectadas": 62, "consultoras_afectadas": 0, "consultoras_base": 82, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Limón-Gualaceo y Gualaquiza-Chiguinda-Sigsig-Cuenca", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["1644"], "secciones_afectadas": ["1644D", "1644E"], "sicc_region": "16"}, {"id": "am_sigsig", "provincia": "Azuay", "canton": "Sigsig", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.05, "lng": -78.7833, "estado": "Amarilla", "posibles_afectadas": 23, "consultoras_afectadas": 0, "consultoras_base": 29, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Gualaquiza-Chiguinda-Sigsig-Cuenca", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["1644", "1645"], "secciones_afectadas": ["1644D", "1645E"], "sicc_region": "16"}, {"id": "am_sucumbíos", "provincia": "Sucumbíos", "canton": "Sucumbíos", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": 0.4667, "lng": -77.5333, "estado": "Amarilla", "posibles_afectadas": 1, "consultoras_afectadas": 0, "consultoras_base": 1, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial vía Interoceánica-La Bonita-El Playón", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2218"], "secciones_afectadas": ["2218H"], "sicc_region": "22"}, {"id": "am_lago_agrio", "provincia": "Sucumbíos", "canton": "Lago Agrio", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": 0.0842, "lng": -76.8874, "estado": "Amarilla", "posibles_afectadas": 474, "consultoras_afectadas": 0, "consultoras_base": 535, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Lago Agrio-El Reventador", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2217", "2218"], "secciones_afectadas": ["2217A", "2217B", "2217I", "2217N", "2218B", "2218C", "2218D", "2218F", "2218G", "2218H", "2218I", "2218J"], "sicc_region": "22"}, {"id": "am_gonzalo_pizarro", "provincia": "Sucumbíos", "canton": "Gonzalo Pizarro", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": 0.1667, "lng": -77.3333, "estado": "Amarilla", "posibles_afectadas": 21, "consultoras_afectadas": 0, "consultoras_base": 31, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial Lago Agrio-El Reventador (sector El Reventador)", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["2218"], "secciones_afectadas": ["2218H"], "sicc_region": "22"}, {"id": "am_zamora", "provincia": "Zamora Chinchipe", "canton": "Zamora", "nivel": "CRÍTICO", "score": 4, "pct": "n/d", "cuenca": false, "lat": -4.0667, "lng": -78.95, "estado": "Roja", "posibles_afectadas": 217, "consultoras_afectadas": 0, "consultoras_base": 266, "tipo": "Aluvión con víctimas mortales (Cantzama, parroquia Guadalupe); emergencia provincial declarada", "rutas": "", "conectividad": "Vía Loja-Zamora (E50) restablecida con restricciones tras cierre por deslizamientos", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["1722"], "secciones_afectadas": ["1722E", "1722I", "1722O"], "sicc_region": "17", "noticia": {"resumen": "Aluvión en el sector Cantzama (parroquia Guadalupe) la noche del 3 de julio dejó al menos 9 fallecidos, decenas de heridos y 10 desaparecidos, entre ellos la gobernadora de la provincia. El COE declaró la emergencia en toda Zamora Chinchipe; la vía Loja–Zamora estuvo cerrada y ya opera con restricciones.", "fuente": "El Comercio", "fecha": "2026-07-06", "url": "https://www.elcomercio.com/actualidad/ecuador/aluvion-zamora-chinchipe-suben-fallecidos-heridos-desaparecidos/"}}, {"id": "am_yantzaza", "provincia": "Zamora Chinchipe", "canton": "Yantzaza", "nivel": "MEDIO-ALTO", "score": 2, "pct": "n/d", "cuenca": false, "lat": -3.8333, "lng": -78.7667, "estado": "Amarilla", "posibles_afectadas": 94, "consultoras_afectadas": 0, "consultoras_base": 122, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Restringida (habilitada con restricción vehicular) Zamora-Yantzaza", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["1722"], "secciones_afectadas": ["1722F", "1722L"], "sicc_region": "17", "noticia": {"resumen": "6 de los 9 cantones de Zamora Chinchipe reportan daños viales considerables tras el aluvión de Cantzama; los equipos de rescate de Zamora y Yantzaza trabajan coordinados desde un puesto de comando unificado.", "fuente": "El Tiempo", "fecha": "2026-07-06", "url": "https://www.eltiempo.com/amp/mundo/latinoamerica/tragedia-en-ecuador-desbordamiento-del-rio-zamora-deja-5-muertos-y-10-desaparecidos-en-la-provincia-de-zamora-chinchipe-tras-intensas-lluvias-3569125"}}, {"id": "am_el_pangui", "provincia": "Zamora Chinchipe", "canton": "El Pangui", "nivel": "MEDIO", "score": 1, "pct": "n/d", "cuenca": false, "lat": -3.6167, "lng": -78.5833, "estado": "Amarilla", "posibles_afectadas": 73, "consultoras_afectadas": 0, "consultoras_base": 89, "tipo": "Deslizamiento en vía (temporada lluviosa, fuera de declaratoria SNGR El Niño)", "rutas": "", "conectividad": "Parcial El Pangui-Tundayme", "fecha": "2026-07-06", "obs": "Detectado por ECU 911 (vía consultasecuador.com), 6-jul-2026. Provincia no incluida en la Resolución SNGR-117-2026 (El Niño); afectación de temporada lluviosa amazónica, agregado por decisión explícita del usuario.", "zonas_afectadas": ["1722"], "secciones_afectadas": ["1722G", "1722L"], "sicc_region": "17"}];
+const today=new Date().toISOString().slice(0,10);
+function seedRecords(){
+  return SEED.map((r,i)=>({...r,id:r.id||('c'+i),fecha:r.fecha||today,
+    tipo:r.tipo||'',rutas:r.rutas||'',conectividad:r.conectividad||'',
+    posibles_afectadas:r.posibles_afectadas??0,
+    consultoras_afectadas:r.consultoras_afectadas??0,
+    consultoras_base:r.consultoras_base??0,
+    zonas_afectadas:r.zonas_afectadas||[],
+    secciones_afectadas:r.secciones_afectadas||[],
+    sicc_region:r.sicc_region||null,
+    noticia:r.noticia||null}));
+}
+
+/* ---------- estado + persistencia ---------- */
+const KEY='monitor_inundaciones_ec';
+let state={records:[],mode:'nivel'};
+let hasStore=false;
+
+async function loadState(){
+  try{
+    if(window.storage&&typeof window.storage.get==='function'){
+      try{const r=await window.storage.get(KEY); if(r&&r.value){state.records=JSON.parse(r.value);hasStore=true;}}
+      catch(e){hasStore=true;} // key no existe aún, pero el store sí
+    }
+  }catch(e){}
+  if(!state.records.length) state.records=seedRecords();
+  updateSavedTag();
+}
+async function persist(){
+  if(window.storage&&typeof window.storage.set==='function'){
+    try{await window.storage.set(KEY,JSON.stringify(state.records));hasStore=true;updateSavedTag();}
+    catch(e){updateSavedTag();}
+  }else{updateSavedTag();}
+}
+function updateSavedTag(){
+  const t=document.getElementById('savedTxt'),p=document.querySelector('#savedTag .pulse');
+  if(hasStore){t.textContent='guardado automáticamente';p.style.background='var(--medio)';}
+  else{t.textContent='en memoria · exporta para guardar';p.style.background='var(--amarilla)';}
+}
+
+/* ---------- provincias de Ecuador (incrustado, no depende de red) ---------- */
+const EC_PROVINCES={"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Esmeraldas"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-78.829,1.434],[-78.77,1.394],[-78.665,1.267],[-78.602,1.264],[-78.57,1.196],[-78.541,1.205],[-78.478,1.187],[-78.496,1.171],[-78.494,1.101],[-78.531,1.021],[-78.535,0.964],[-78.523,0.928],[-78.442,0.872],[-78.451,0.789],[-78.513,0.76],[-78.465,0.646],[-78.424,0.586],[-78.426,0.559],[-78.449,0.542],[-78.497,0.542],[-78.539,0.515],[-78.667,0.373],[-78.72,0.403],[-78.86,0.423],[-78.902,0.387],[-78.913,0.358],[-78.988,0.267],[-79.011,0.267],[-79.04,0.295],[-79.145,0.318],[-79.222,0.316],[-79.352,0.232],[-79.304,0.173],[-79.37,0.036],[-79.45,-0.001],[-79.439,-0.026],[-79.421,-0.033],[-79.433,-0.05],[-79.493,-0.026],[-79.596,-0.014],[-79.618,0.045],[-79.568,0.117],[-79.624,0.154],[-79.65,0.146],[-79.66,0.176],[-79.682,0.17],[-79.702,0.187],[-79.652,0.259],[-79.712,0.304],[-79.696,0.347],[-79.718,0.371],[-79.753,0.369],[-79.815,0.323],[-79.89,0.319],[-79.929,0.26],[-79.961,0.266],[-79.974,0.284],[-80.0,0.345],[-79.993,0.378],[-80.044,0.459],[-80.043,0.501],[-80.017,0.559],[-80.036,0.625],[-80.09,0.652],[-80.105,0.68],[-80.109,0.738],[-80.097,0.78],[-80.046,0.84],[-79.981,0.832],[-79.947,0.855],[-79.862,0.876],[-79.793,0.922],[-79.766,0.955],[-79.656,1.004],[-79.65,0.984],[-79.67,0.922],[-79.615,0.845],[-79.648,0.907],[-79.633,0.986],[-79.615,0.996],[-79.572,0.984],[-79.435,1.078],[-79.365,1.072],[-79.272,1.093],[-79.248,1.08],[-79.166,1.1],[-79.057,1.218],[-79.013,1.193],[-78.992,1.12],[-78.962,1.145],[-78.955,1.207],[-78.929,1.243],[-78.92,1.231],[-78.902,1.236],[-78.872,1.289],[-78.813,1.277],[-78.82,1.292],[-78.875,1.305],[-78.882,1.319],[-78.832,1.381],[-78.829,1.434]]],[[[-78.902,1.374],[-78.899,1.271],[-78.913,1.245],[-78.936,1.257],[-78.957,1.236],[-78.992,1.268],[-78.995,1.287],[-78.902,1.374]]]]}},{"type":"Feature","properties":{"name":"Carchi"},"geometry":{"type":"Polygon","coordinates":[[[-78.478,1.187],[-78.349,1.056],[-78.25,1.02],[-78.078,0.901],[-78.007,0.898],[-77.918,0.874],[-77.903,0.832],[-77.848,0.809],[-77.703,0.843],[-77.673,0.82],[-77.667,0.748],[-77.646,0.716],[-77.58,0.671],[-77.543,0.656],[-77.514,0.661],[-77.57,0.625],[-77.67,0.639],[-77.673,0.617],[-77.65,0.585],[-77.706,0.536],[-77.775,0.448],[-77.789,0.423],[-77.792,0.371],[-77.814,0.346],[-78.0,0.469],[-78.131,0.506],[-78.169,0.651],[-78.258,0.775],[-78.36,0.853],[-78.429,0.865],[-78.523,0.928],[-78.535,0.964],[-78.531,1.021],[-78.494,1.101],[-78.496,1.171],[-78.478,1.187]]]}},{"type":"Feature","properties":{"name":"Sucumbios"},"geometry":{"type":"Polygon","coordinates":[[[-77.509,0.661],[-77.468,0.651],[-77.435,0.434],[-77.397,0.388],[-77.207,0.334],[-77.117,0.358],[-77.083,0.349],[-77.045,0.306],[-76.946,0.287],[-76.882,0.24],[-76.798,0.25],[-76.734,0.233],[-76.737,0.273],[-76.725,0.278],[-76.627,0.259],[-76.565,0.216],[-76.426,0.243],[-76.408,0.255],[-76.416,0.402],[-76.365,0.407],[-76.3,0.462],[-76.224,0.407],[-76.136,0.397],[-76.12,0.352],[-76.053,0.364],[-75.972,0.252],[-75.952,0.204],[-75.818,0.1],[-75.754,0.073],[-75.627,0.079],[-75.465,-0.04],[-75.283,-0.107],[-75.331,-0.145],[-75.403,-0.146],[-75.43,-0.164],[-75.539,-0.12],[-75.623,-0.107],[-75.643,-0.129],[-75.62,-0.181],[-75.579,-0.183],[-75.485,-0.248],[-75.453,-0.361],[-75.406,-0.442],[-75.376,-0.467],[-75.347,-0.471],[-75.291,-0.528],[-75.272,-0.526],[-75.257,-0.562],[-75.258,-0.633],[-75.282,-0.644],[-75.29,-0.618],[-75.315,-0.623],[-75.383,-0.602],[-75.403,-0.565],[-75.542,-0.542],[-75.574,-0.495],[-75.589,-0.5],[-75.6,-0.482],[-75.654,-0.455],[-75.7,-0.464],[-75.748,-0.423],[-75.832,-0.437],[-75.887,-0.413],[-75.948,-0.423],[-75.937,-0.562],[-75.994,-0.553],[-76.078,-0.502],[-76.103,-0.442],[-76.274,-0.443],[-76.41,-0.51],[-76.427,-0.486],[-76.502,-0.474],[-76.576,-0.405],[-76.622,-0.425],[-76.646,-0.391],[-76.714,-0.342],[-76.768,-0.253],[-76.918,-0.079],[-76.945,-0.066],[-77.027,-0.099],[-77.074,-0.102],[-77.147,-0.083],[-77.197,-0.091],[-77.284,-0.047],[-77.35,-0.132],[-77.374,-0.141],[-77.446,-0.125],[-77.444,-0.06],[-77.465,-0.023],[-77.589,-0.1],[-77.641,-0.081],[-77.759,-0.075],[-77.779,-0.047],[-77.779,0.016],[-77.845,0.036],[-77.864,0.074],[-77.97,0.12],[-77.945,0.161],[-77.836,0.269],[-77.852,0.293],[-77.792,0.371],[-77.784,0.435],[-77.706,0.536],[-77.65,0.585],[-77.673,0.617],[-77.67,0.639],[-77.57,0.625],[-77.509,0.661]]]}},{"type":"Feature","properties":{"name":"Orellana"},"geometry":{"type":"Polygon","coordinates":[[[-75.267,-0.643],[-75.294,-0.668],[-75.297,-0.747],[-75.252,-0.933],[-75.227,-0.97],[-75.349,-0.975],[-75.406,-0.915],[-75.413,-0.924],[-75.56,-1.503],[-75.581,-1.547],[-75.602,-1.496],[-75.703,-1.446],[-75.718,-1.456],[-75.748,-1.405],[-75.833,-1.384],[-75.844,-1.357],[-75.88,-1.343],[-75.878,-1.328],[-75.894,-1.329],[-75.9,-1.347],[-75.95,-1.345],[-76.005,-1.31],[-76.056,-1.301],[-76.064,-1.276],[-76.106,-1.273],[-76.132,-1.273],[-76.156,-1.293],[-76.245,-1.282],[-76.284,-1.311],[-76.29,-1.3],[-76.358,-1.283],[-76.363,-1.263],[-76.464,-1.251],[-76.511,-1.188],[-76.515,-1.084],[-76.545,-1.052],[-76.595,-1.046],[-76.665,-1.078],[-76.761,-1.098],[-76.811,-1.09],[-76.835,-1.116],[-76.85,-1.157],[-77.056,-1.094],[-77.074,-1.04],[-77.043,-0.988],[-77.062,-0.964],[-77.036,-0.925],[-77.114,-0.904],[-77.187,-0.86],[-77.196,-0.836],[-77.177,-0.787],[-77.119,-0.73],[-77.124,-0.708],[-77.165,-0.723],[-77.21,-0.765],[-77.255,-0.834],[-77.499,-0.945],[-77.566,-0.947],[-77.579,-0.931],[-77.528,-0.841],[-77.533,-0.781],[-77.497,-0.691],[-77.51,-0.656],[-77.575,-0.577],[-77.622,-0.545],[-77.566,-0.496],[-77.564,-0.467],[-77.552,-0.458],[-77.448,-0.508],[-77.404,-0.504],[-77.357,-0.426],[-77.329,-0.424],[-77.323,-0.387],[-77.273,-0.36],[-77.254,-0.295],[-77.26,-0.246],[-77.298,-0.19],[-77.289,-0.129],[-77.299,-0.059],[-77.284,-0.047],[-77.197,-0.091],[-77.147,-0.083],[-77.074,-0.102],[-77.027,-0.099],[-76.972,-0.07],[-76.932,-0.07],[-76.768,-0.253],[-76.714,-0.342],[-76.646,-0.391],[-76.622,-0.425],[-76.576,-0.405],[-76.502,-0.474],[-76.427,-0.486],[-76.41,-0.51],[-76.274,-0.443],[-76.103,-0.442],[-76.078,-0.502],[-75.994,-0.553],[-75.937,-0.562],[-75.948,-0.423],[-75.887,-0.413],[-75.832,-0.437],[-75.748,-0.423],[-75.7,-0.464],[-75.654,-0.455],[-75.6,-0.482],[-75.589,-0.5],[-75.574,-0.495],[-75.542,-0.542],[-75.403,-0.565],[-75.383,-0.602],[-75.315,-0.623],[-75.29,-0.618],[-75.285,-0.641],[-75.267,-0.643]]]}},{"type":"Feature","properties":{"name":"Pastaza"},"geometry":{"type":"Polygon","coordinates":[[[-75.581,-1.547],[-76.091,-2.129],[-76.625,-2.538],[-76.67,-2.565],[-76.726,-2.577],[-76.831,-2.53],[-76.918,-2.54],[-76.959,-2.528],[-77.017,-2.477],[-77.035,-2.43],[-77.123,-2.314],[-77.384,-2.154],[-77.711,-2.022],[-77.753,-1.951],[-77.812,-1.934],[-77.838,-1.913],[-77.914,-1.668],[-77.949,-1.656],[-78.009,-1.668],[-78.078,-1.506],[-78.129,-1.456],[-78.173,-1.447],[-78.148,-1.424],[-78.117,-1.358],[-78.117,-1.233],[-77.942,-1.224],[-77.897,-1.237],[-77.882,-1.214],[-77.831,-1.222],[-77.696,-1.152],[-77.547,-1.136],[-77.446,-1.087],[-77.373,-1.079],[-77.234,-1.025],[-77.052,-1.01],[-77.074,-1.04],[-77.056,-1.094],[-76.868,-1.157],[-76.85,-1.157],[-76.835,-1.116],[-76.811,-1.09],[-76.761,-1.098],[-76.665,-1.078],[-76.595,-1.046],[-76.545,-1.052],[-76.515,-1.084],[-76.511,-1.188],[-76.464,-1.251],[-76.363,-1.263],[-76.358,-1.283],[-76.29,-1.3],[-76.284,-1.311],[-76.245,-1.282],[-76.156,-1.293],[-76.132,-1.273],[-76.106,-1.273],[-76.064,-1.276],[-76.056,-1.301],[-76.005,-1.31],[-75.95,-1.345],[-75.9,-1.347],[-75.894,-1.329],[-75.878,-1.328],[-75.88,-1.343],[-75.844,-1.357],[-75.833,-1.384],[-75.748,-1.405],[-75.718,-1.456],[-75.703,-1.446],[-75.602,-1.496],[-75.581,-1.547]]]}},{"type":"Feature","properties":{"name":"Morona Santiago"},"geometry":{"type":"Polygon","coordinates":[[[-76.67,-2.565],[-77.868,-2.99],[-77.941,-3.055],[-78.043,-3.19],[-78.105,-3.245],[-78.148,-3.322],[-78.196,-3.364],[-78.197,-3.386],[-78.157,-3.429],[-78.155,-3.457],[-78.164,-3.477],[-78.226,-3.507],[-78.257,-3.41],[-78.334,-3.385],[-78.362,-3.409],[-78.355,-3.446],[-78.376,-3.529],[-78.645,-3.539],[-78.684,-3.579],[-78.822,-3.547],[-78.864,-3.497],[-78.874,-3.45],[-78.849,-3.389],[-78.939,-3.323],[-78.938,-3.288],[-78.794,-3.17],[-78.722,-3.139],[-78.672,-3.091],[-78.656,-3.008],[-78.57,-2.839],[-78.599,-2.786],[-78.566,-2.721],[-78.421,-2.627],[-78.428,-2.601],[-78.472,-2.568],[-78.51,-2.585],[-78.526,-2.623],[-78.55,-2.613],[-78.549,-2.563],[-78.528,-2.562],[-78.49,-2.506],[-78.481,-2.381],[-78.503,-2.358],[-78.578,-2.323],[-78.58,-2.312],[-78.545,-2.287],[-78.53,-2.24],[-78.498,-2.211],[-78.501,-2.127],[-78.446,-2.075],[-78.463,-2.007],[-78.49,-1.965],[-78.416,-1.854],[-78.448,-1.756],[-78.448,-1.706],[-78.359,-1.622],[-78.363,-1.542],[-78.307,-1.485],[-78.219,-1.482],[-78.173,-1.447],[-78.129,-1.456],[-78.07,-1.521],[-78.009,-1.668],[-77.949,-1.656],[-77.914,-1.668],[-77.829,-1.925],[-77.753,-1.951],[-77.711,-2.022],[-77.384,-2.154],[-77.123,-2.314],[-77.035,-2.43],[-76.993,-2.506],[-76.918,-2.54],[-76.831,-2.53],[-76.726,-2.577],[-76.67,-2.565]]]}},{"type":"Feature","properties":{"name":"Zamora Chinchipe"},"geometry":{"type":"Polygon","coordinates":[[[-78.376,-3.529],[-78.402,-3.594],[-78.401,-3.68],[-78.426,-3.689],[-78.42,-3.791],[-78.481,-3.85],[-78.498,-3.95],[-78.562,-3.98],[-78.577,-4.1],[-78.656,-4.291],[-78.682,-4.327],[-78.673,-4.402],[-78.637,-4.435],[-78.67,-4.493],[-78.682,-4.567],[-78.853,-4.652],[-78.899,-4.694],[-78.929,-4.747],[-78.9,-4.844],[-78.911,-4.864],[-78.98,-4.874],[-79.009,-4.96],[-79.064,-5.011],[-79.104,-4.98],[-79.303,-4.961],[-79.341,-4.904],[-79.378,-4.885],[-79.395,-4.848],[-79.451,-4.81],[-79.461,-4.77],[-79.409,-4.72],[-79.332,-4.608],[-79.318,-4.513],[-79.292,-4.482],[-79.266,-4.478],[-79.205,-4.503],[-79.156,-4.47],[-79.114,-4.408],[-79.103,-4.206],[-79.155,-4.139],[-79.136,-4.032],[-79.14,-3.947],[-79.119,-3.883],[-79.194,-3.731],[-79.184,-3.716],[-79.153,-3.71],[-79.144,-3.677],[-79.102,-3.636],[-79.065,-3.619],[-79.046,-3.475],[-79.061,-3.431],[-79.055,-3.412],[-78.939,-3.323],[-78.849,-3.389],[-78.874,-3.45],[-78.864,-3.497],[-78.822,-3.547],[-78.684,-3.579],[-78.645,-3.539],[-78.376,-3.529]]]}},{"type":"Feature","properties":{"name":"Loja"},"geometry":{"type":"Polygon","coordinates":[[[-80.326,-4.015],[-80.305,-4.005],[-80.259,-3.944],[-80.181,-3.908],[-80.165,-3.881],[-80.014,-3.862],[-79.935,-3.83],[-79.741,-3.833],[-79.705,-3.821],[-79.669,-3.781],[-79.606,-3.752],[-79.56,-3.795],[-79.509,-3.791],[-79.446,-3.805],[-79.415,-3.793],[-79.396,-3.766],[-79.403,-3.722],[-79.378,-3.694],[-79.366,-3.653],[-79.38,-3.62],[-79.428,-3.589],[-79.475,-3.632],[-79.486,-3.628],[-79.468,-3.512],[-79.423,-3.449],[-79.457,-3.416],[-79.458,-3.328],[-79.318,-3.347],[-79.301,-3.372],[-79.3,-3.424],[-79.282,-3.45],[-79.237,-3.461],[-79.185,-3.442],[-79.13,-3.538],[-79.12,-3.611],[-79.102,-3.636],[-79.144,-3.677],[-79.153,-3.71],[-79.184,-3.716],[-79.194,-3.731],[-79.119,-3.883],[-79.14,-3.947],[-79.136,-4.032],[-79.155,-4.139],[-79.103,-4.206],[-79.114,-4.408],[-79.156,-4.47],[-79.205,-4.503],[-79.266,-4.478],[-79.292,-4.482],[-79.318,-4.513],[-79.332,-4.608],[-79.409,-4.72],[-79.461,-4.77],[-79.487,-4.72],[-79.499,-4.661],[-79.528,-4.618],[-79.504,-4.556],[-79.507,-4.532],[-79.558,-4.517],[-79.658,-4.439],[-79.796,-4.485],[-79.833,-4.479],[-79.904,-4.399],[-79.982,-4.389],[-80.08,-4.309],[-80.14,-4.283],[-80.205,-4.298],[-80.255,-4.387],[-80.383,-4.476],[-80.408,-4.478],[-80.47,-4.446],[-80.492,-4.413],[-80.489,-4.396],[-80.345,-4.198],[-80.47,-4.213],[-80.491,-4.169],[-80.487,-4.131],[-80.514,-4.083],[-80.512,-4.064],[-80.481,-3.999],[-80.448,-3.983],[-80.407,-3.982],[-80.326,-4.015]]]}},{"type":"Feature","properties":{"name":"El Oro"},"geometry":{"type":"Polygon","coordinates":[[[-80.165,-3.881],[-80.189,-3.858],[-80.193,-3.822],[-80.226,-3.749],[-80.216,-3.632],[-80.225,-3.592],[-80.25,-3.578],[-80.24,-3.514],[-80.272,-3.486],[-80.266,-3.426],[-80.341,-3.393],[-80.341,-3.369],[-80.307,-3.321],[-80.321,-3.356],[-80.314,-3.376],[-80.286,-3.321],[-80.259,-3.348],[-80.136,-3.328],[-80.06,-3.204],[-80.038,-3.208],[-80.04,-3.28],[-80.029,-3.274],[-80.009,-3.242],[-79.953,-3.197],[-79.933,-3.115],[-79.896,-3.045],[-79.76,-3.065],[-79.639,-3.129],[-79.6,-3.162],[-79.595,-3.204],[-79.632,-3.291],[-79.668,-3.32],[-79.615,-3.33],[-79.508,-3.313],[-79.458,-3.328],[-79.457,-3.416],[-79.423,-3.449],[-79.468,-3.512],[-79.488,-3.619],[-79.481,-3.635],[-79.428,-3.589],[-79.373,-3.628],[-79.368,-3.669],[-79.403,-3.722],[-79.396,-3.766],[-79.408,-3.786],[-79.446,-3.805],[-79.509,-3.791],[-79.56,-3.795],[-79.606,-3.752],[-79.669,-3.781],[-79.705,-3.821],[-79.741,-3.833],[-79.935,-3.83],[-80.014,-3.862],[-80.165,-3.881]]]}},{"type":"Feature","properties":{"name":"Guayas"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-80.06,-2.663],[-80.015,-2.664],[-79.946,-2.707],[-79.903,-2.717],[-79.907,-2.732],[-79.995,-2.798],[-80.131,-3.021],[-80.167,-3.017],[-80.204,-3.034],[-80.266,-3.018],[-80.262,-2.841],[-80.211,-2.725],[-80.06,-2.663]]],[[[-79.896,-3.045],[-79.875,-3.005],[-79.881,-2.965],[-79.835,-2.807],[-79.776,-2.659],[-79.726,-2.594],[-79.745,-2.49],[-79.79,-2.481],[-79.839,-2.377],[-79.84,-2.21],[-79.869,-2.161],[-79.854,-2.12],[-79.862,-2.108],[-79.818,-2.08],[-79.806,-2.045],[-79.773,-2.027],[-79.766,-2.005],[-79.831,-2.044],[-79.835,-2.07],[-79.874,-2.075],[-79.892,-2.116],[-79.902,-2.185],[-79.863,-2.297],[-79.879,-2.492],[-79.896,-2.543],[-79.933,-2.58],[-79.998,-2.608],[-80.014,-2.59],[-80.064,-2.577],[-80.069,-2.561],[-80.026,-2.525],[-80.002,-2.48],[-79.975,-2.477],[-79.944,-2.498],[-79.93,-2.484],[-79.936,-2.463],[-79.941,-2.484],[-79.978,-2.457],[-80.034,-2.474],[-80.036,-2.438],[-80.009,-2.359],[-79.978,-2.347],[-79.95,-2.307],[-79.983,-2.327],[-80.013,-2.326],[-80.033,-2.346],[-80.076,-2.458],[-80.175,-2.587],[-80.208,-2.601],[-80.232,-2.629],[-80.27,-2.605],[-80.28,-2.613],[-80.28,-2.649],[-80.244,-2.699],[-80.255,-2.73],[-80.278,-2.727],[-80.321,-2.711],[-80.396,-2.649],[-80.468,-2.618],[-80.543,-2.53],[-80.411,-2.417],[-80.325,-2.396],[-80.277,-2.368],[-80.232,-2.3],[-80.213,-2.11],[-80.288,-2.017],[-80.347,-1.982],[-80.426,-1.962],[-80.478,-1.931],[-80.507,-1.884],[-80.516,-1.841],[-80.438,-1.836],[-80.426,-1.79],[-80.396,-1.746],[-80.329,-1.687],[-80.3,-1.698],[-80.274,-1.682],[-80.221,-1.681],[-80.226,-1.619],[-80.268,-1.595],[-80.283,-1.568],[-80.222,-1.559],[-80.188,-1.537],[-80.184,-1.521],[-80.202,-1.481],[-80.192,-1.431],[-80.131,-1.398],[-80.124,-1.334],[-80.043,-1.272],[-79.984,-1.118],[-79.974,-1.117],[-79.975,-1.138],[-79.938,-1.143],[-79.853,-1.088],[-79.804,-1.023],[-79.795,-0.983],[-79.712,-0.872],[-79.536,-0.837],[-79.517,-0.86],[-79.538,-0.937],[-79.533,-0.96],[-79.562,-0.987],[-79.581,-1.051],[-79.614,-1.066],[-79.651,-1.11],[-79.674,-1.114],[-79.686,-1.147],[-79.738,-1.185],[-79.748,-1.235],[-79.847,-1.399],[-79.871,-1.519],[-79.856,-1.573],[-79.86,-1.634],[-79.759,-1.697],[-79.65,-1.907],[-79.592,-1.906],[-79.524,-1.885],[-79.482,-1.897],[-79.373,-1.97],[-79.286,-2.108],[-79.235,-2.154],[-79.172,-2.162],[-79.14,-2.147],[-79.127,-2.163],[-79.13,-2.204],[-79.155,-2.243],[-79.192,-2.267],[-79.353,-2.303],[-79.416,-2.348],[-79.431,-2.401],[-79.425,-2.422],[-79.514,-2.495],[-79.513,-2.509],[-79.49,-2.518],[-79.437,-2.497],[-79.419,-2.546],[-79.691,-2.826],[-79.704,-2.875],[-79.695,-2.957],[-79.749,-3.024],[-79.76,-3.065],[-79.896,-3.045]]],[[[-79.82,-2.486],[-79.809,-2.512],[-79.785,-2.521],[-79.773,-2.542],[-79.794,-2.574],[-79.829,-2.592],[-79.833,-2.636],[-79.877,-2.65],[-79.882,-2.627],[-79.82,-2.486]]]]}},{"type":"Feature","properties":{"name":"Santa Elena"},"geometry":{"type":"Polygon","coordinates":[[[-80.543,-2.53],[-80.657,-2.416],[-80.803,-2.375],[-80.864,-2.329],[-80.914,-2.319],[-80.935,-2.261],[-81.011,-2.177],[-81.001,-2.164],[-80.949,-2.186],[-80.931,-2.217],[-80.906,-2.216],[-80.781,-2.143],[-80.745,-2.103],[-80.737,-2.043],[-80.763,-1.974],[-80.733,-1.954],[-80.733,-1.904],[-80.782,-1.737],[-80.818,-1.677],[-80.679,-1.672],[-80.625,-1.656],[-80.564,-1.667],[-80.54,-1.727],[-80.562,-1.817],[-80.516,-1.841],[-80.507,-1.884],[-80.478,-1.931],[-80.426,-1.962],[-80.347,-1.982],[-80.288,-2.017],[-80.213,-2.11],[-80.232,-2.3],[-80.277,-2.368],[-80.325,-2.396],[-80.411,-2.417],[-80.543,-2.53]]]}},{"type":"Feature","properties":{"name":"Manabi"},"geometry":{"type":"Polygon","coordinates":[[[-80.818,-1.677],[-80.856,-1.588],[-80.816,-1.552],[-80.821,-1.5],[-80.8,-1.481],[-80.771,-1.478],[-80.764,-1.391],[-80.743,-1.368],[-80.744,-1.344],[-80.834,-1.231],[-80.882,-1.146],[-80.916,-1.066],[-80.91,-1.045],[-80.816,-0.946],[-80.788,-0.951],[-80.722,-0.931],[-80.724,-0.94],[-80.691,-0.95],[-80.653,-0.923],[-80.643,-0.937],[-80.616,-0.941],[-80.57,-0.912],[-80.547,-0.888],[-80.498,-0.692],[-80.449,-0.606],[-80.422,-0.6],[-80.406,-0.646],[-80.379,-0.658],[-80.299,-0.662],[-80.299,-0.65],[-80.392,-0.625],[-80.416,-0.574],[-80.437,-0.558],[-80.452,-0.477],[-80.496,-0.381],[-80.433,-0.339],[-80.371,-0.223],[-80.35,-0.215],[-80.324,-0.173],[-80.305,-0.189],[-80.232,-0.14],[-80.108,0.007],[-80.099,0.039],[-80.066,0.052],[-80.037,0.176],[-80.048,0.318],[-80.037,0.357],[-80.013,0.325],[-80.0,0.345],[-79.961,0.266],[-79.933,0.26],[-79.908,0.278],[-79.89,0.319],[-79.815,0.323],[-79.753,0.369],[-79.718,0.371],[-79.696,0.347],[-79.712,0.304],[-79.652,0.259],[-79.702,0.187],[-79.682,0.17],[-79.66,0.176],[-79.65,0.146],[-79.624,0.154],[-79.568,0.117],[-79.619,0.042],[-79.596,-0.014],[-79.607,-0.041],[-79.599,-0.072],[-79.497,-0.162],[-79.411,-0.188],[-79.41,-0.398],[-79.449,-0.462],[-79.452,-0.493],[-79.536,-0.691],[-79.579,-0.723],[-79.62,-0.85],[-79.684,-0.861],[-79.722,-0.881],[-79.795,-0.983],[-79.799,-1.014],[-79.841,-1.075],[-79.904,-1.13],[-79.97,-1.14],[-79.977,-1.115],[-79.993,-1.129],[-80.043,-1.272],[-80.124,-1.334],[-80.131,-1.398],[-80.192,-1.431],[-80.202,-1.481],[-80.184,-1.521],[-80.188,-1.537],[-80.222,-1.559],[-80.283,-1.568],[-80.268,-1.595],[-80.226,-1.619],[-80.221,-1.681],[-80.274,-1.682],[-80.3,-1.698],[-80.329,-1.687],[-80.396,-1.746],[-80.426,-1.79],[-80.438,-1.836],[-80.516,-1.841],[-80.553,-1.828],[-80.563,-1.798],[-80.54,-1.727],[-80.559,-1.698],[-80.558,-1.676],[-80.577,-1.66],[-80.818,-1.677]]]}},{"type":"Feature","properties":{"name":"Azuay"},"geometry":{"type":"Polygon","coordinates":[[[-79.437,-2.497],[-79.388,-2.508],[-79.349,-2.57],[-79.294,-2.588],[-79.267,-2.63],[-79.164,-2.732],[-79.143,-2.729],[-79.138,-2.703],[-79.095,-2.677],[-79.079,-2.651],[-79.061,-2.654],[-78.951,-2.762],[-78.93,-2.817],[-78.915,-2.823],[-78.816,-2.823],[-78.816,-2.792],[-78.787,-2.747],[-78.794,-2.719],[-78.784,-2.7],[-78.766,-2.687],[-78.726,-2.691],[-78.673,-2.653],[-78.638,-2.644],[-78.611,-2.597],[-78.564,-2.562],[-78.549,-2.563],[-78.554,-2.602],[-78.533,-2.624],[-78.51,-2.585],[-78.481,-2.568],[-78.435,-2.594],[-78.421,-2.618],[-78.437,-2.645],[-78.558,-2.71],[-78.597,-2.779],[-78.57,-2.839],[-78.656,-3.008],[-78.672,-3.091],[-78.722,-3.139],[-78.794,-3.17],[-78.938,-3.288],[-78.939,-3.323],[-79.055,-3.412],[-79.05,-3.552],[-79.065,-3.619],[-79.085,-3.633],[-79.102,-3.636],[-79.12,-3.611],[-79.123,-3.557],[-79.179,-3.448],[-79.237,-3.461],[-79.282,-3.45],[-79.3,-3.424],[-79.301,-3.372],[-79.318,-3.347],[-79.433,-3.338],[-79.508,-3.313],[-79.615,-3.33],[-79.668,-3.32],[-79.627,-3.282],[-79.595,-3.204],[-79.595,-3.175],[-79.639,-3.129],[-79.76,-3.065],[-79.749,-3.024],[-79.695,-2.957],[-79.704,-2.875],[-79.691,-2.826],[-79.425,-2.555],[-79.417,-2.534],[-79.437,-2.497]]]}},{"type":"Feature","properties":{"name":"Ca\u00f1ar"},"geometry":{"type":"Polygon","coordinates":[[[-79.153,-2.735],[-79.267,-2.63],[-79.294,-2.588],[-79.349,-2.57],[-79.388,-2.508],[-79.437,-2.497],[-79.49,-2.518],[-79.513,-2.509],[-79.514,-2.495],[-79.425,-2.422],[-79.426,-2.361],[-79.365,-2.309],[-79.192,-2.267],[-79.155,-2.243],[-79.13,-2.204],[-79.117,-2.245],[-79.028,-2.345],[-78.945,-2.397],[-78.862,-2.39],[-78.762,-2.326],[-78.599,-2.303],[-78.481,-2.381],[-78.49,-2.506],[-78.518,-2.55],[-78.536,-2.567],[-78.564,-2.562],[-78.601,-2.587],[-78.638,-2.644],[-78.673,-2.653],[-78.726,-2.691],[-78.776,-2.692],[-78.791,-2.71],[-78.787,-2.747],[-78.816,-2.792],[-78.816,-2.823],[-78.93,-2.817],[-78.951,-2.762],[-79.072,-2.65],[-79.132,-2.697],[-79.153,-2.735]]]}},{"type":"Feature","properties":{"name":"Napo"},"geometry":{"type":"Polygon","coordinates":[[[-78.391,-0.964],[-78.332,-1.06],[-78.345,-1.164],[-78.292,-1.14],[-78.222,-1.14],[-78.211,-1.159],[-78.19,-1.159],[-78.176,-1.184],[-78.12,-1.201],[-78.114,-1.343],[-78.148,-1.424],[-78.202,-1.474],[-78.233,-1.486],[-78.307,-1.485],[-78.353,-1.526],[-78.369,-1.493],[-78.48,-1.441],[-78.515,-1.48],[-78.62,-1.49],[-78.699,-1.478],[-78.8,-1.424],[-78.881,-1.459],[-78.928,-1.383],[-78.888,-1.218],[-78.866,-1.178],[-78.767,-1.132],[-78.661,-1.139],[-78.621,-1.111],[-78.575,-1.103],[-78.553,-1.061],[-78.468,-1.081],[-78.434,-1.044],[-78.42,-0.988],[-78.391,-0.964]]]}},{"type":"Feature","properties":{"name":"Tungurahua"},"geometry":{"type":"Polygon","coordinates":[[[-78.292,-1.14],[-78.348,-1.16],[-78.334,-1.121],[-78.336,-1.045],[-78.391,-0.964],[-78.442,-0.938],[-78.422,-0.916],[-78.388,-0.814],[-78.405,-0.71],[-78.397,-0.684],[-78.33,-0.66],[-78.311,-0.598],[-78.262,-0.531],[-78.237,-0.453],[-78.246,-0.4],[-78.187,-0.296],[-78.177,-0.181],[-78.127,-0.169],[-78.095,-0.184],[-78.074,-0.17],[-78.057,-0.133],[-78.013,-0.136],[-77.98,-0.101],[-77.964,-0.048],[-77.857,0.001],[-77.833,0.032],[-77.779,0.016],[-77.785,-0.014],[-77.772,-0.066],[-77.74,-0.078],[-77.641,-0.081],[-77.589,-0.1],[-77.465,-0.023],[-77.444,-0.06],[-77.446,-0.125],[-77.391,-0.139],[-77.35,-0.132],[-77.299,-0.059],[-77.289,-0.129],[-77.298,-0.19],[-77.258,-0.253],[-77.255,-0.309],[-77.273,-0.36],[-77.323,-0.387],[-77.329,-0.424],[-77.357,-0.426],[-77.404,-0.504],[-77.448,-0.508],[-77.552,-0.458],[-77.564,-0.467],[-77.566,-0.496],[-77.62,-0.537],[-77.619,-0.553],[-77.575,-0.577],[-77.51,-0.656],[-77.497,-0.691],[-77.533,-0.781],[-77.528,-0.841],[-77.579,-0.94],[-77.543,-0.951],[-77.499,-0.945],[-77.255,-0.834],[-77.21,-0.765],[-77.165,-0.723],[-77.124,-0.708],[-77.119,-0.73],[-77.188,-0.803],[-77.192,-0.852],[-77.114,-0.904],[-77.036,-0.925],[-77.062,-0.964],[-77.043,-0.988],[-77.052,-1.01],[-77.234,-1.025],[-77.373,-1.079],[-77.446,-1.087],[-77.547,-1.136],[-77.696,-1.152],[-77.831,-1.222],[-77.882,-1.214],[-77.897,-1.237],[-77.942,-1.224],[-78.117,-1.233],[-78.127,-1.194],[-78.176,-1.184],[-78.19,-1.159],[-78.211,-1.159],[-78.222,-1.14],[-78.292,-1.14]]]}},{"type":"Feature","properties":{"name":"Chimborazo"},"geometry":{"type":"Polygon","coordinates":[[[-78.922,-2.4],[-78.958,-2.392],[-79.028,-2.345],[-79.117,-2.245],[-79.13,-2.204],[-79.076,-2.175],[-79.016,-2.099],[-79.026,-2.047],[-79.0,-1.918],[-79.009,-1.854],[-79.002,-1.782],[-78.975,-1.761],[-78.926,-1.752],[-78.891,-1.721],[-78.86,-1.664],[-78.853,-1.541],[-78.879,-1.489],[-78.881,-1.459],[-78.8,-1.424],[-78.699,-1.478],[-78.62,-1.49],[-78.515,-1.48],[-78.48,-1.441],[-78.369,-1.493],[-78.353,-1.526],[-78.365,-1.55],[-78.356,-1.613],[-78.409,-1.659],[-78.45,-1.717],[-78.445,-1.772],[-78.426,-1.8],[-78.416,-1.854],[-78.49,-1.965],[-78.463,-2.007],[-78.446,-2.075],[-78.501,-2.127],[-78.498,-2.211],[-78.53,-2.24],[-78.545,-2.287],[-78.58,-2.312],[-78.599,-2.303],[-78.762,-2.326],[-78.862,-2.39],[-78.922,-2.4]]]}},{"type":"Feature","properties":{"name":"Bolivar"},"geometry":{"type":"Polygon","coordinates":[[[-78.866,-1.178],[-78.888,-1.218],[-78.928,-1.383],[-78.881,-1.459],[-78.879,-1.489],[-78.853,-1.541],[-78.86,-1.664],[-78.891,-1.721],[-78.926,-1.752],[-78.975,-1.761],[-79.002,-1.782],[-79.009,-1.854],[-79.0,-1.918],[-79.026,-2.047],[-79.016,-2.099],[-79.076,-2.175],[-79.13,-2.204],[-79.127,-2.163],[-79.14,-2.147],[-79.172,-2.162],[-79.235,-2.154],[-79.206,-2.065],[-79.279,-1.945],[-79.259,-1.923],[-79.229,-1.823],[-79.252,-1.775],[-79.25,-1.736],[-79.299,-1.66],[-79.344,-1.638],[-79.292,-1.585],[-79.266,-1.586],[-79.25,-1.541],[-79.319,-1.468],[-79.319,-1.359],[-79.292,-1.334],[-79.337,-1.291],[-79.378,-1.326],[-79.386,-1.306],[-79.328,-1.225],[-79.138,-1.156],[-79.082,-1.155],[-79.034,-1.194],[-78.991,-1.209],[-78.951,-1.203],[-78.907,-1.172],[-78.866,-1.178]]]}},{"type":"Feature","properties":{"name":"Imbabura"},"geometry":{"type":"Polygon","coordinates":[[[-77.814,0.346],[-77.852,0.293],[-77.836,0.269],[-77.945,0.161],[-78.078,0.198],[-78.131,0.161],[-78.202,0.135],[-78.255,0.142],[-78.32,0.189],[-78.365,0.167],[-78.361,0.218],[-78.387,0.242],[-78.467,0.242],[-78.631,0.215],[-78.778,0.239],[-78.952,0.211],[-78.994,0.229],[-79.011,0.267],[-78.983,0.271],[-78.902,0.387],[-78.86,0.423],[-78.72,0.403],[-78.667,0.373],[-78.539,0.515],[-78.497,0.542],[-78.431,0.551],[-78.424,0.586],[-78.465,0.646],[-78.513,0.76],[-78.451,0.789],[-78.442,0.872],[-78.36,0.853],[-78.258,0.775],[-78.169,0.651],[-78.131,0.506],[-78.0,0.469],[-77.814,0.346]]]}},{"type":"Feature","properties":{"name":"Cotopaxi"},"geometry":{"type":"Polygon","coordinates":[[[-78.397,-0.684],[-78.405,-0.72],[-78.391,-0.833],[-78.413,-0.869],[-78.422,-0.916],[-78.442,-0.938],[-78.391,-0.964],[-78.42,-0.988],[-78.455,-1.075],[-78.492,-1.082],[-78.533,-1.059],[-78.553,-1.061],[-78.575,-1.103],[-78.621,-1.111],[-78.661,-1.139],[-78.786,-1.136],[-78.866,-1.178],[-78.907,-1.172],[-78.968,-1.209],[-79.015,-1.203],[-79.082,-1.155],[-79.109,-1.152],[-79.161,-1.163],[-79.235,-1.2],[-79.281,-1.203],[-79.288,-1.17],[-79.323,-1.121],[-79.291,-0.914],[-79.248,-0.87],[-79.222,-0.82],[-79.181,-0.785],[-79.087,-0.552],[-79.068,-0.579],[-79.047,-0.585],[-79.02,-0.546],[-78.991,-0.532],[-79.001,-0.503],[-79.032,-0.476],[-79.003,-0.419],[-78.927,-0.347],[-78.913,-0.353],[-78.87,-0.425],[-78.829,-0.516],[-78.752,-0.572],[-78.714,-0.653],[-78.618,-0.607],[-78.59,-0.622],[-78.552,-0.603],[-78.49,-0.604],[-78.462,-0.615],[-78.397,-0.684]]]}},{"type":"Feature","properties":{"name":"Los Rios"},"geometry":{"type":"Polygon","coordinates":[[[-79.281,-1.203],[-79.328,-1.225],[-79.388,-1.318],[-79.37,-1.322],[-79.337,-1.291],[-79.292,-1.334],[-79.319,-1.359],[-79.319,-1.468],[-79.25,-1.541],[-79.266,-1.586],[-79.292,-1.585],[-79.344,-1.638],[-79.299,-1.66],[-79.25,-1.736],[-79.252,-1.775],[-79.229,-1.823],[-79.259,-1.923],[-79.279,-1.945],[-79.206,-2.065],[-79.235,-2.154],[-79.286,-2.108],[-79.373,-1.97],[-79.482,-1.897],[-79.524,-1.885],[-79.592,-1.906],[-79.65,-1.907],[-79.759,-1.697],[-79.855,-1.641],[-79.862,-1.624],[-79.856,-1.573],[-79.871,-1.519],[-79.847,-1.399],[-79.748,-1.235],[-79.741,-1.189],[-79.686,-1.147],[-79.674,-1.114],[-79.651,-1.11],[-79.614,-1.066],[-79.581,-1.051],[-79.562,-0.987],[-79.533,-0.96],[-79.523,-0.845],[-79.552,-0.837],[-79.62,-0.85],[-79.587,-0.74],[-79.569,-0.712],[-79.539,-0.697],[-79.48,-0.544],[-79.342,-0.554],[-79.357,-0.577],[-79.347,-0.622],[-79.361,-0.656],[-79.351,-0.682],[-79.316,-0.696],[-79.29,-0.692],[-79.205,-0.629],[-79.132,-0.556],[-79.087,-0.552],[-79.166,-0.759],[-79.282,-0.899],[-79.304,-0.949],[-79.323,-1.121],[-79.288,-1.17],[-79.281,-1.203]]]}},{"type":"Feature","properties":{"name":"Pichincha"},"geometry":{"type":"Polygon","coordinates":[[[-77.833,0.032],[-77.857,0.001],[-77.964,-0.048],[-77.98,-0.101],[-78.013,-0.136],[-78.057,-0.133],[-78.074,-0.17],[-78.095,-0.184],[-78.135,-0.169],[-78.183,-0.188],[-78.194,-0.32],[-78.246,-0.4],[-78.237,-0.453],[-78.262,-0.531],[-78.311,-0.598],[-78.33,-0.66],[-78.397,-0.684],[-78.462,-0.615],[-78.527,-0.602],[-78.59,-0.622],[-78.618,-0.607],[-78.708,-0.656],[-78.752,-0.572],[-78.829,-0.516],[-78.843,-0.471],[-78.922,-0.345],[-78.891,-0.298],[-78.764,-0.285],[-78.745,-0.215],[-78.796,-0.158],[-78.891,-0.107],[-78.923,-0.076],[-79.1,-0.082],[-79.107,0.0],[-79.31,0.007],[-79.364,0.047],[-79.304,0.173],[-79.352,0.232],[-79.222,0.316],[-79.195,0.319],[-79.04,0.295],[-79.011,0.267],[-78.994,0.229],[-78.952,0.211],[-78.778,0.239],[-78.631,0.215],[-78.467,0.242],[-78.387,0.242],[-78.361,0.218],[-78.365,0.167],[-78.32,0.189],[-78.273,0.151],[-78.227,0.133],[-78.175,0.141],[-78.078,0.198],[-77.945,0.161],[-77.97,0.115],[-77.864,0.074],[-77.85,0.04],[-77.833,0.032]]]}},{"type":"Feature","properties":{"name":"Santo Domingo de los Ts\u00e1chilas"},"geometry":{"type":"Polygon","coordinates":[[[-78.922,-0.345],[-78.958,-0.366],[-78.973,-0.4],[-79.003,-0.419],[-79.032,-0.476],[-79.001,-0.503],[-78.991,-0.532],[-79.02,-0.546],[-79.037,-0.581],[-79.062,-0.583],[-79.087,-0.552],[-79.115,-0.547],[-79.29,-0.692],[-79.341,-0.689],[-79.361,-0.656],[-79.347,-0.622],[-79.357,-0.577],[-79.342,-0.554],[-79.48,-0.544],[-79.407,-0.383],[-79.411,-0.188],[-79.497,-0.162],[-79.599,-0.072],[-79.603,-0.023],[-79.575,-0.012],[-79.493,-0.026],[-79.433,-0.05],[-79.421,-0.033],[-79.439,-0.026],[-79.45,-0.001],[-79.384,0.022],[-79.364,0.047],[-79.31,0.007],[-79.107,0.0],[-79.1,-0.082],[-78.923,-0.076],[-78.891,-0.107],[-78.796,-0.158],[-78.745,-0.215],[-78.764,-0.285],[-78.891,-0.298],[-78.922,-0.345]]]}}]};
+
+/* ---------- mapa ---------- */
+let map,layer,provLayer;
+function initMap(){
+  map=L.map('map',{zoomControl:true,attributionControl:false,minZoom:5}).setView([-1.6,-79.0],6);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,opacity:.32,crossOrigin:true}).addTo(map);
+  provLayer=L.geoJSON(EC_PROVINCES,{
+    style:{color:'#3d6c97',weight:1.4,fillColor:'#102338',fillOpacity:.55},
+    onEachFeature:(f,lyr)=>{
+      lyr.bindTooltip(f.properties.name,{sticky:true,direction:'top',className:'prov-tip'});
+      lyr.on('mouseover',()=>lyr.setStyle({color:'#7fd0ff',weight:2,fillOpacity:.30}));
+      lyr.on('mouseout',()=>lyr.setStyle({color:'#3d6c97',weight:1.4,fillOpacity:.55}));
+    }
+  }).addTo(map);
+  map.fitBounds(provLayer.getBounds(),{padding:[24,24]});
+  layer=L.layerGroup().addTo(map);
+}
+function colorOf(r){
+  if(state.mode==='nivel')  return NIVEL_COLOR[r.nivel];
+  if(state.mode==='estado') return ESTADO_COLOR[r.estado];
+  return CONEC_COLOR[conecCat(r.conectividad)];
+}
+function radiusOf(r){
+  if(r.posibles_afectadas>0) return Math.min(26,7+Math.sqrt(r.posibles_afectadas)/12);
+  return 5+ (r.score||1)*2.2;
+}
+function drawMarkers(rows){
+  layer.clearLayers();
+  rows.forEach(r=>{
+    const m=L.circleMarker([r.lat,r.lng],{radius:radiusOf(r),
+      color:colorOf(r),weight:2,fillColor:colorOf(r),fillOpacity:.55});
+    m.bindPopup(popupHtml(r));
+    m._rid=r.id;
+    m.addTo(layer);
+  });
+}
+function popupHtml(r){
+  const cc=conecCat(r.conectividad), ccol=CONEC_COLOR[cc];
+  const zonas=r.zonas_afectadas||[], secs=r.secciones_afectadas||[];
+  return `<div class="pop"><h3>${r.canton}</h3><div class="pp">${r.provincia} · ${r.lat.toFixed(3)}, ${r.lng.toFixed(3)}</div>
+   <div class="pg">
+     <span>Riesgo</span><span>${r.nivel} (${r.score}/4)</span>
+     <span>Estado</span><span>${r.estado}</span>
+     <span>% inundado</span><span>${r.pct}</span>
+     <span>Posibles afectadas</span><span>${(r.posibles_afectadas||0).toLocaleString('es')}</span>
+     <span>Consultoras (base)</span><span>${(r.consultoras_base||0).toLocaleString('es')}</span>
+     <span>Consultoras afectadas</span><span>${(r.consultoras_afectadas||0).toLocaleString('es')}</span>
+     <span>Actualizado</span><span>${r.fecha||'—'}</span>
+   </div>
+   ${r.tipo?`<div class="pl"><b>Afectación:</b> ${r.tipo}</div>`:''}
+   ${r.conectividad?`<div class="pl"><b>Conectividad:</b> <span class="cchip" style="background:${ccol}22;color:${ccol}">${r.conectividad}</span></div>`:''}
+   ${r.rutas?`<div class="pl"><b>Ruta alterna:</b> ${r.rutas}</div>`:''}
+   ${secs.length?`<div class="pzs">
+     <div class="pzs-t">Zonas y secciones afectadas (Sicc) · ${zonas.length} zona${zonas.length===1?'':'s'} · ${secs.length} sección${secs.length===1?'':'es'}</div>
+     <div class="pzs-box">${secs.map(s=>`<span class="pzs-chip">${s}</span>`).join('')}</div>
+   </div>`:''}
+   ${r.noticia?`<div class="pnews">
+     <div class="pnews-t">📰 Noticia reciente</div>
+     <div class="pnews-body">${r.noticia.resumen}</div>
+     <div class="pnews-src">${r.noticia.fuente} · ${r.noticia.fecha}${r.noticia.url?` · <a href="${r.noticia.url}" target="_blank" rel="noopener">ver fuente</a>`:''}</div>
+   </div>`:''}
+   ${r.obs?`<div style="font-size:11px;color:var(--muted);margin:6px 0 8px">${r.obs}</div>`:''}
+   <button onclick="editRecord('${r.id}')">Editar</button></div>`;
+}
+
+/* ---------- render lista + stats ---------- */
+const ESTADO_W={'Roja':4,'Naranja':3,'Amarilla':2,'Normal':1};
+const CONEC_W={'Bloqueado':4,'Restringido':3,'Parcial':2,'Habilitado':1,'Sin dato':0};
+const quick={alerta:false,vias:false};
+function sevOf(r){
+  if(state.mode==='estado') return ESTADO_W[r.estado]||0;
+  if(state.mode==='conectividad') return CONEC_W[conecCat(r.conectividad)]||0;
+  return r.score||0;
+}
+function filtered(){
+  const q=document.getElementById('search').value.toLowerCase().trim();
+  const prov=document.getElementById('fProv').value;
+  return state.records.filter(r=>{
+    if(prov&&r.provincia!==prov) return false;
+    if(q&&!(r.canton.toLowerCase().includes(q)||r.provincia.toLowerCase().includes(q))) return false;
+    if(quick.alerta&&(ESTADO_W[r.estado]||0)<3) return false;
+    if(quick.vias&&(CONEC_W[conecCat(r.conectividad)]||0)<2) return false;
+    return true;
+  }).sort((a,b)=>sevOf(b)-sevOf(a)||(b.posibles_afectadas||0)-(a.posibles_afectadas||0)||a.canton.localeCompare(b.canton));
+}
+function toggleQuick(k){quick[k]=!quick[k];render();}
+function render(){
+  const rows=filtered();
+  drawMarkers(rows);
+  // stats (sobre el set filtrado)
+  const crit=rows.filter(r=>r.nivel==='CRÍTICO').length;
+  const alto=rows.filter(r=>r.nivel==='ALTO').length;
+  const af=rows.reduce((s,r)=>s+(+r.posibles_afectadas||0),0);
+  const co=rows.reduce((s,r)=>s+(+r.consultoras_afectadas||0),0);
+  const cb=rows.reduce((s,r)=>s+(+r.consultoras_base||0),0);
+  document.getElementById('stats').innerHTML=
+    `<div class="stat p"><div class="n">${rows.length}</div><div class="l">Cantones</div></div>
+     <div class="stat c"><div class="n">${crit}</div><div class="l">Críticos</div></div>
+     <div class="stat a"><div class="n">${alto}</div><div class="l">Alto</div></div>
+     <div class="stat t"><div class="n">${af.toLocaleString('es')}</div><div class="l">Pos. afectadas</div></div>
+     <div class="stat k"><div class="n">${co.toLocaleString('es')}</div><div class="l">Consult. afect.</div></div>`;
+  // chips de filtro rápido
+  const nAl=state.records.filter(r=>(ESTADO_W[r.estado]||0)>=3).length;
+  const nVi=state.records.filter(r=>(CONEC_W[conecCat(r.conectividad)]||0)>=2).length;
+  document.getElementById('chips').innerHTML=
+    `<button class="chip ${quick.alerta?'on':''}" onclick="toggleQuick('alerta')">Alerta ≥ Naranja (${nAl})</button>
+     <button class="chip ${quick.vias?'on':''}" onclick="toggleQuick('vias')">Vías afectadas (${nVi})</button>`;
+  // barra de contexto (corte + fuentes)
+  const fmax=state.records.reduce((m,r)=>r.fecha>m?r.fecha:m,'');
+  document.getElementById('ctx').innerHTML=
+    `<span><span class="dotp"></span>Mostrando solo cantones con <b>alerta activa</b> (${state.records.length})</span>
+     <span class="sep">·</span><span>Vías: <b>ECU 911</b> (consultasecuador.com)</span>
+     <span class="sep">·</span><span>Base geográfica: <b>Sicc-INEC</b> (${cb.toLocaleString('es')} consultoras en zona)</span>
+     <span class="sep">·</span><span>Corte: <b>${fmax||'—'}</b></span>
+     <span class="sep">·</span><span>Actualización por chat: escribe «actualiza»</span>`;
+  // lista
+  const list=document.getElementById('list');
+  if(!rows.length){list.innerHTML='<div class="empty"><b>Sin resultados</b>Ajusta el filtro o agrega un cantón.</div>';return;}
+  list.innerHTML=rows.map(r=>{
+    const nc=NIVEL_COLOR[r.nivel],ec=ESTADO_COLOR[r.estado];
+    const cc=CONEC_COLOR[conecCat(r.conectividad)];
+    const dot=state.mode==='nivel'?nc:(state.mode==='estado'?ec:cc);
+    return `<div class="row" onclick="flyTo('${r.id}')">
+      <div class="dot" style="background:${dot}"></div>
+      <div><div class="name">${r.canton}</div>
+        <div class="sub">${r.provincia}${r.conectividad?' · '+r.conectividad:''}</div>
+        <div class="tags" style="margin-top:5px">
+          <span class="tag" style="background:${nc}22;color:${nc}">${r.nivel}</span>
+          <span class="tag" style="background:${ec}22;color:${ec}">${r.estado}</span>
+        </div></div>
+      <div class="pav">
+        <div class="pn">${(+r.posibles_afectadas||0).toLocaleString('es')}</div>
+        <div class="pl">pos. afect.</div>
+        <div class="acts" style="justify-content:flex-end;margin-top:4px">
+          <button class="icon" title="Editar" onclick="event.stopPropagation();editRecord('${r.id}')">✎</button>
+        </div>
+      </div></div>`;
+  }).join('');
+  buildProvFilter();
+  drawLegend(rows);
+}
+function buildProvFilter(){
+  const sel=document.getElementById('fProv'),cur=sel.value;
+  const provs=[...new Set(state.records.map(r=>r.provincia))].sort();
+  sel.innerHTML='<option value="">Todas las provincias</option>'+provs.map(p=>`<option ${p===cur?'selected':''}>${p}</option>`).join('');
+}
+function catOf(r){
+  if(state.mode==='nivel')  return r.nivel;
+  if(state.mode==='estado') return r.estado;
+  return conecCat(r.conectividad);
+}
+function drawLegend(rows){
+  rows=rows||state.records;
+  const map=state.mode==='nivel'?NIVEL_COLOR:(state.mode==='estado'?ESTADO_COLOR:CONEC_COLOR);
+  const title=state.mode==='nivel'?'Riesgo estructural':(state.mode==='estado'?'Estado operativo':'Conectividad vial');
+  // sumar posibles afectadas por categoría de la vista activa
+  const sum={}, cnt={};
+  Object.keys(map).forEach(k=>{sum[k]=0;cnt[k]=0;});
+  rows.forEach(r=>{const k=catOf(r); if(k in sum){sum[k]+=(+r.posibles_afectadas||0);cnt[k]++;}});
+  const tot=rows.reduce((s,r)=>s+(+r.posibles_afectadas||0),0);
+  const fmt=n=>n.toLocaleString('es');
+  document.getElementById('legend').innerHTML=
+    `<div class="lt">${title} · pos. afectadas</div>`+
+    Object.entries(map).map(([k,c])=>
+      `<div class="li"><span class="sw" style="background:${c}"></span>${k}`+
+      `<span class="lv" style="color:${c}">${fmt(sum[k])}</span></div>`).join('')+
+    `<div class="lcap">Total: ${fmt(tot)} · ${rows.length} cantones</div>`;
+}
+function flyTo(id){
+  const r=state.records.find(x=>x.id===id); if(!r)return;
+  map.flyTo([r.lat,r.lng],10,{duration:.6});
+  layer.eachLayer(l=>{if(l._rid===id) setTimeout(()=>l.openPopup(),650);});
+}
+function setMode(m){
+  state.mode=m;
+  document.getElementById('modeNivel').classList.toggle('on',m==='nivel');
+  document.getElementById('modeEstado').classList.toggle('on',m==='estado');
+  document.getElementById('modeConec').classList.toggle('on',m==='conectividad');
+  render();
+}
+
+/* ---------- CRUD ---------- */
+function openForm(r){
+  document.getElementById('mTitle').textContent=r?'Editar cantón':'Nuevo cantón';
+  document.getElementById('delBtn').style.display=r?'inline-flex':'none';
+  const g=id=>document.getElementById(id);
+  g('i_id').value=r?r.id:'';
+  g('i_prov').value=r?r.provincia:'';
+  g('i_canton').value=r?r.canton:'';
+  g('i_nivel').value=r?r.nivel:'ALTO';
+  g('i_score').value=r?r.score:'';
+  g('i_pct').value=r?r.pct:'n/d';
+  g('i_cuenca').value=r?String(r.cuenca):'false';
+  g('i_lat').value=r?r.lat:'';
+  g('i_lng').value=r?r.lng:'';
+  g('i_estado').value=r?r.estado:'Normal';
+  g('i_afectados').value=r?(r.posibles_afectadas??0):0;
+  g('i_consult').value=r?(r.consultoras_afectadas??0):0;
+  g('i_consultbase').value=r?(r.consultoras_base??0):0;
+  g('i_fecha').value=r?(r.fecha||today):today;
+  g('i_obs').value=r?r.obs:'';
+  g('i_tipo').value=r?(r.tipo||''):'';
+  g('i_rutas').value=r?(r.rutas||''):'';
+  g('i_conec').value=r?(r.conectividad||''):'';
+  document.getElementById('scrim').classList.add('on');
+}
+function editRecord(id){openForm(state.records.find(r=>r.id===id));}
+function closeForm(){document.getElementById('scrim').classList.remove('on');}
+function saveRecord(){
+  const g=id=>document.getElementById(id).value;
+  const canton=g('i_canton').trim(), prov=g('i_prov').trim();
+  const lat=parseFloat(g('i_lat')), lng=parseFloat(g('i_lng'));
+  if(!canton||!prov){toast('Provincia y cantón son obligatorios');return;}
+  if(isNaN(lat)||isNaN(lng)){toast('Latitud y longitud deben ser numéricas');return;}
+  const nivel=g('i_nivel');
+  const rec={
+    id:g('i_id')||('c'+Date.now()),
+    provincia:prov,canton,nivel,
+    score:parseInt(g('i_score'))||SCORE[nivel],
+    pct:g('i_pct')||'n/d',
+    cuenca:g('i_cuenca')==='true',
+    lat,lng,
+    estado:g('i_estado'),
+    posibles_afectadas:parseInt(g('i_afectados'))||0,
+    consultoras_afectadas:parseInt(g('i_consult'))||0,
+    consultoras_base:parseInt(g('i_consultbase'))||0,
+    fecha:g('i_fecha')||today,
+    obs:g('i_obs').trim(),
+    tipo:g('i_tipo').trim(),
+    rutas:g('i_rutas').trim(),
+    conectividad:g('i_conec').trim()
+  };
+  const i=state.records.findIndex(r=>r.id===rec.id);
+  if(i>=0) state.records[i]=rec; else state.records.push(rec);
+  closeForm();render();persist();
+  toast(i>=0?'Cantón actualizado':'Cantón agregado');
+}
+function deleteRecord(){
+  const id=document.getElementById('i_id').value;
+  if(!id)return;
+  if(!confirm('¿Eliminar este cantón del monitor?'))return;
+  state.records=state.records.filter(r=>r.id!==id);
+  closeForm();render();persist();toast('Cantón eliminado');
+}
+
+/* ---------- import / export / reset ---------- */
+function exportData(){
+  const blob=new Blob([JSON.stringify(state.records,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='monitor_inundaciones_ec_'+today+'.json';
+  a.click();URL.revokeObjectURL(a.href);
+  toast('JSON exportado ('+state.records.length+' registros)');
+}
+function exportXlsx(){
+  if(typeof XLSX==='undefined'){toast('Librería Excel aún cargando, reintenta');return;}
+  // Encabezados legibles; el campo 'id' se conserva para poder reimportar/parchear.
+  const rows=state.records.map(r=>({
+    'Provincia':r.provincia, 'Cantón':r.canton, 'Nivel':r.nivel, 'Score':r.score,
+    '% inundado':r.pct, 'Cuenca crónica':r.cuenca?'Sí':'No',
+    'Latitud':r.lat, 'Longitud':r.lng, 'Estado':r.estado, 'Posibles afectadas':r.posibles_afectadas,
+    'Consultoras afectadas':r.consultoras_afectadas||0,
+    'Consultoras base':r.consultoras_base||0,
+    'Fecha':r.fecha, 'Tipo de afectación':r.tipo||'', 'Ruta alterna':r.rutas||'',
+    'Conectividad':r.conectividad||'', 'Zonas afectadas':(r.zonas_afectadas||[]).join(', '),
+    'Secciones afectadas':(r.secciones_afectadas||[]).join(', '),
+    'Observación':r.obs||'', 'id':r.id
+  }));
+  const ws=XLSX.utils.json_to_sheet(rows);
+  ws['!cols']=[{wch:13},{wch:30},{wch:11},{wch:6},{wch:13},{wch:13},{wch:10},{wch:10},
+               {wch:10},{wch:16},{wch:15},{wch:18},{wch:12},{wch:30},{wch:32},{wch:24},{wch:20},{wch:36},{wch:40},{wch:8}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Cantones');
+  // --- Hoja Resumen por provincia ---
+  const NIV=['CRÍTICO','ALTO','MEDIO-ALTO','MEDIO'];
+  const by={};
+  state.records.forEach(r=>{
+    const p=r.provincia||'?';
+    if(!by[p]) by[p]={'CRÍTICO':0,'ALTO':0,'MEDIO-ALTO':0,'MEDIO':0,tot:0,af:0,co:0,cb:0};
+    if(by[p][r.nivel]!==undefined) by[p][r.nivel]++;
+    by[p].tot++; by[p].af+=(+r.posibles_afectadas||0); by[p].co+=(+r.consultoras_afectadas||0); by[p].cb+=(+r.consultoras_base||0);
+  });
+  const provs=Object.keys(by).sort((a,b)=>by[b]['CRÍTICO']-by[a]['CRÍTICO']||by[b].tot-by[a].tot||a.localeCompare(b));
+  const sumRows=provs.map(p=>({'Provincia':p,'Crítico':by[p]['CRÍTICO'],'Alto':by[p]['ALTO'],
+    'Medio-Alto':by[p]['MEDIO-ALTO'],'Medio':by[p]['MEDIO'],'Cantones':by[p].tot,
+    'Pos. afectadas':by[p].af,'Consultoras afectadas':by[p].co,'Consultoras base':by[p].cb}));
+  const T={'Provincia':'TOTAL','Crítico':0,'Alto':0,'Medio-Alto':0,'Medio':0,'Cantones':0,'Pos. afectadas':0,'Consultoras afectadas':0,'Consultoras base':0};
+  sumRows.forEach(r=>NIV.forEach(n=>{const k=n==='CRÍTICO'?'Crítico':n==='ALTO'?'Alto':n==='MEDIO-ALTO'?'Medio-Alto':'Medio';T[k]+=r[k];}));
+  sumRows.forEach(r=>{T['Cantones']+=r['Cantones'];T['Pos. afectadas']+=r['Pos. afectadas'];T['Consultoras afectadas']+=r['Consultoras afectadas'];T['Consultoras base']+=r['Consultoras base'];});
+  const pct=(v,t)=>t?Math.round(v*1000/t)/10+'%':'0%';
+  const pctReal=(v,b)=>b?Math.round(v*1000/b)/10+'%':'—';
+  sumRows.forEach(r=>{r['% cantones']=pct(r['Cantones'],T['Cantones']);
+    r['% Pos. Afectadas']=pct(r['Pos. afectadas'],T['Pos. afectadas']);
+    r['% Consultoras afectadas']=pct(r['Consultoras afectadas'],T['Consultoras afectadas']);
+    r['% Consultoras afect. (real)']=pctReal(r['Consultoras afectadas'],r['Consultoras base']);});
+  T['% cantones']='100%'; T['% Pos. Afectadas']='100%'; T['% Consultoras afectadas']='100%';
+  T['% Consultoras afect. (real)']=pctReal(T['Consultoras afectadas'],T['Consultoras base']);
+  sumRows.push(T);
+  const ws2=XLSX.utils.json_to_sheet(sumRows,{header:['Provincia','Crítico','Alto','Medio-Alto','Medio','Cantones','% cantones','Pos. afectadas','% Pos. Afectadas','Consultoras afectadas','% Consultoras afectadas','Consultoras base','% Consultoras afect. (real)']});
+  ws2['!cols']=[{wch:18},{wch:9},{wch:9},{wch:12},{wch:9},{wch:10},{wch:11},{wch:14},{wch:17},{wch:20},{wch:22},{wch:16},{wch:24}];
+  XLSX.utils.book_append_sheet(wb,ws2,'Resumen');
+  XLSX.writeFile(wb,'monitor_inundaciones_ec_'+today+'.xlsx');
+  toast('Excel exportado ('+state.records.length+' registros + resumen)');
+}
+function importData(ev){
+  const f=ev.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const data=JSON.parse(rd.result);
+      if(!Array.isArray(data)) throw 0;
+      // normaliza / completa campos faltantes
+      state.records=data.map((r,i)=>({
+        id:r.id||('c'+i+'_'+Date.now()),
+        provincia:r.provincia||'?',canton:r.canton||'?',
+        nivel:r.nivel||'ALTO',score:r.score||SCORE[r.nivel]||3,
+        pct:r.pct||'n/d',cuenca:!!r.cuenca,
+        lat:+r.lat,lng:+r.lng,
+        estado:r.estado||'Normal',posibles_afectadas:+(r.posibles_afectadas??r.afectados)||0,
+        consultoras_afectadas:+r.consultoras_afectadas||0,
+        consultoras_base:+r.consultoras_base||0,
+        fecha:r.fecha||today,obs:r.obs||'',
+        tipo:r.tipo||'',rutas:r.rutas||'',conectividad:r.conectividad||'',
+        zonas_afectadas:r.zonas_afectadas||[],secciones_afectadas:r.secciones_afectadas||[]
+      })).filter(r=>!isNaN(r.lat)&&!isNaN(r.lng));
+      render();persist();toast('Importados '+state.records.length+' registros');
+    }catch(e){toast('Archivo JSON inválido');}
+    ev.target.value='';
+  };
+  rd.readAsText(f);
+}
+function resetData(){
+  if(!confirm('Restaurar los cantones con alerta activa. Se perderán tus cambios no exportados.'))return;
+  state.records=seedRecords();render();persist();toast('Datos base restaurados');
+}
+
+/* ---------- util ---------- */
+let toastT;
+function openHelp(){document.getElementById('helpScrim').classList.add('on');}
+const NIV=['CRÍTICO','ALTO','MEDIO-ALTO','MEDIO'];
+const cell=(v,c)=>v?`<span class="cc" style="background:${c}22;color:${c}">${v}</span>`:'<span style="color:var(--faint)">·</span>';
+const fmtN=n=>n.toLocaleString('es');
+const pctOf=(v,t)=>t?(Math.round(v*1000/t)/10)+'%':'0%';
+const pctRealOf=(v,base)=>base?(Math.round(v*1000/base)/10)+'%':'—';
+
+function setSumView(view){
+  state.sumView = view;
+  document.getElementById('sumBtnProv').classList.toggle('on', view==='provincia');
+  document.getElementById('sumBtnReg').classList.toggle('on', view==='region');
+  document.getElementById('sumBody').innerHTML = view==='region' ? buildRegionTable() : buildProvinciaTable();
+}
+
+function buildProvinciaTable(){
+  const by={};
+  state.records.forEach(r=>{
+    const p=r.provincia||'?';
+    if(!by[p]) by[p]={'CRÍTICO':0,'ALTO':0,'MEDIO-ALTO':0,'MEDIO':0,tot:0,af:0,co:0,cb:0};
+    if(by[p][r.nivel]!==undefined) by[p][r.nivel]++;
+    by[p].tot++; by[p].af+=(+r.posibles_afectadas||0); by[p].co+=(+r.consultoras_afectadas||0); by[p].cb+=(+r.consultoras_base||0);
+  });
+  const provs=Object.keys(by).sort((a,b)=>by[b]['CRÍTICO']-by[a]['CRÍTICO']||by[b].tot-by[a].tot||a.localeCompare(b));
+  const T={'CRÍTICO':0,'ALTO':0,'MEDIO-ALTO':0,'MEDIO':0,tot:0,af:0,co:0,cb:0};
+  provs.forEach(p=>NIV.forEach(n=>T[n]+=by[p][n]));
+  provs.forEach(p=>{T.tot+=by[p].tot;T.af+=by[p].af;T.co+=by[p].co;T.cb+=by[p].cb;});
+  let html='<table class="sumt"><thead><tr><th>Provincia</th>'+
+    '<th>Crítico</th><th>Alto</th><th>Medio-Alto</th><th>Medio</th><th>Cantones</th><th>% cant.</th>'+
+    '<th>Pos. afectadas</th><th>% Pos. Afectadas</th><th>Consultoras afectadas</th><th>% Consultoras afectadas</th><th>% Consultoras afect. (real)</th></tr></thead><tbody>';
+  provs.forEach(p=>{const b=by[p];
+    html+=`<tr><td>${p}</td>
+      <td>${cell(b['CRÍTICO'],NIVEL_COLOR['CRÍTICO'])}</td>
+      <td>${cell(b['ALTO'],NIVEL_COLOR['ALTO'])}</td>
+      <td>${cell(b['MEDIO-ALTO'],NIVEL_COLOR['MEDIO-ALTO'])}</td>
+      <td>${cell(b['MEDIO'],NIVEL_COLOR['MEDIO'])}</td>
+      <td class="num">${b.tot}</td><td class="num" style="color:var(--muted)">${pctOf(b.tot,T.tot)}</td>
+      <td class="num">${fmtN(b.af)}</td><td class="num" style="color:var(--muted)">${pctOf(b.af,T.af)}</td>
+      <td class="num">${fmtN(b.co)}</td><td class="num" style="color:var(--muted)">${pctOf(b.co,T.co)}</td>
+      <td class="num" style="color:#a78bfa">${pctRealOf(b.co,b.cb)}</td></tr>`;
+  });
+  html+=`</tbody><tfoot><tr><td>TOTAL (${provs.length} prov.)</td>
+      <td class="num">${T['CRÍTICO']}</td><td class="num">${T['ALTO']}</td>
+      <td class="num">${T['MEDIO-ALTO']}</td><td class="num">${T['MEDIO']}</td>
+      <td class="num">${T.tot}</td><td class="num">100%</td>
+      <td class="num">${fmtN(T.af)}</td><td class="num">100%</td>
+      <td class="num">${fmtN(T.co)}</td><td class="num">100%</td>
+      <td class="num" style="color:#a78bfa">${pctRealOf(T.co,T.cb)}</td></tr></tfoot></table>`;
+  return html;
+}
+
+function buildRegionTable(){
+  const regs={};
+  const compartidos=new Set();
+  state.records.forEach(r=>{
+    const zonas=r.zonas_afectadas||[];
+    // la región real es el prefijo de 2 dígitos de CADA zona, no un campo fijo del cantón
+    const regionesDelCanton=[...new Set(zonas.map(z=>'R'+z.slice(0,2)))];
+    if(regionesDelCanton.length>1) compartidos.add(r.canton);
+    regionesDelCanton.forEach(reg=>{
+      if(!regs[reg]) regs[reg]={'CRÍTICO':0,'ALTO':0,'MEDIO-ALTO':0,'MEDIO':0,tot:0,af:0,co:0,cb:0,zonas:{}};
+      const g=regs[reg];
+      if(g[r.nivel]!==undefined) g[r.nivel]++;
+      g.tot++; g.af+=(+r.posibles_afectadas||0); g.co+=(+r.consultoras_afectadas||0); g.cb+=(+r.consultoras_base||0);
+      zonas.filter(z=>('R'+z.slice(0,2))===reg).forEach(z=>{
+        if(!g.zonas[z]) g.zonas[z]={secciones:new Set(),cantones:new Set()};
+        g.zonas[z].cantones.add(r.canton);
+        (r.secciones_afectadas||[]).filter(s=>s.startsWith(z)).forEach(s=>g.zonas[z].secciones.add(s));
+      });
+    });
+  });
+  const regiones=Object.keys(regs).sort((a,b)=>regs[b]['CRÍTICO']-regs[a]['CRÍTICO']||regs[b].tot-regs[a].tot||a.localeCompare(b));
+  let html='<table class="sumt"><thead><tr><th>Región / Zona</th>'+
+    '<th>Crítico</th><th>Alto</th><th>Medio-Alto</th><th>Medio</th><th>Cantones</th>'+
+    '<th>Pos. afectadas</th><th>Consultoras afectadas</th><th>Consultoras base</th></tr></thead><tbody>';
+  regiones.forEach(reg=>{
+    const b=regs[reg];
+    html+=`<tr class="reg-row"><td>${reg}</td>
+      <td>${cell(b['CRÍTICO'],NIVEL_COLOR['CRÍTICO'])}</td>
+      <td>${cell(b['ALTO'],NIVEL_COLOR['ALTO'])}</td>
+      <td>${cell(b['MEDIO-ALTO'],NIVEL_COLOR['MEDIO-ALTO'])}</td>
+      <td>${cell(b['MEDIO'],NIVEL_COLOR['MEDIO'])}</td>
+      <td class="num">${b.tot}</td>
+      <td class="num">${fmtN(b.af)}</td>
+      <td class="num">${fmtN(b.co)}</td>
+      <td class="num">${fmtN(b.cb)}</td></tr>`;
+    const zonas=Object.keys(b.zonas).sort();
+    zonas.forEach(z=>{
+      const zd=b.zonas[z];
+      const cantonesTxt=[...zd.cantones].map(c=>compartidos.has(c)?c+' *':c).join(', ');
+      html+=`<tr class="zona-row"><td colspan="9">↳ Zona <span class="zc">${z}</span> · ${zd.secciones.size} sección${zd.secciones.size===1?'':'es'} · ${cantonesTxt}</td></tr>`;
+    });
+  });
+  html+='</tbody></table>';
+  if(compartidos.size){
+    html+=`<div style="font-size:10.5px;color:var(--muted);margin-top:8px;padding:6px 8px;background:#1e293b40;border-radius:6px">
+      * Cantón con zonas en más de una región (ej. Guayaquil abarca R16, R17, R18 y R20): aparece completo en cada región donde
+      tiene zonas, así que sus totales de Crítico/Alto/Posibles afectadas/Consultoras <b>no deben sumarse entre regiones</b>
+      para evitar doble conteo. La columna de Zonas y Secciones sí es exacta (no se repite).</div>`;
+  }
+  return html;
+}
+
+function openSummary(){
+  state.sumView = state.sumView || 'provincia';
+  document.getElementById('sumBtnProv').classList.toggle('on', state.sumView==='provincia');
+  document.getElementById('sumBtnReg').classList.toggle('on', state.sumView==='region');
+  document.getElementById('sumBody').innerHTML = state.sumView==='region' ? buildRegionTable() : buildProvinciaTable();
+  document.getElementById('sumScrim').classList.add('on');
+}
+function toast(msg){
+  const t=document.getElementById('toast');t.textContent=msg;t.classList.add('on');
+  clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),2200);
+}
+
+/* ---------- arranque ---------- */
+(async function(){
+  initMap();
+  await loadState();
+  render();
+})();
+</script>
