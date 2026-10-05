@@ -200,6 +200,13 @@
   .inh-pdf b{font-size:12.5px;font-weight:600}
   .inh-pdf span{font-size:11px;color:var(--muted);display:block;margin-top:1px}
   .inh-foot{font-size:11px;color:var(--muted);line-height:1.45;margin-top:10px}
+
+  .upd-banner{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:3000;display:none;align-items:center;gap:12px;
+              background:var(--cyan-deep);color:#eceae7;padding:10px 14px;border-radius:9px;font-size:12.5px;
+              box-shadow:0 6px 24px #00000066;max-width:92vw}
+  .upd-banner.on{display:flex}
+  .upd-banner button{background:#eceae7;color:#141518;border:0;border-radius:6px;padding:5px 11px;font-size:12px;font-weight:600;cursor:pointer}
+  .upd-banner .x{background:transparent;color:#eceae7;font-size:16px;padding:0 4px;font-weight:400}
 </style>
 
 <header>
@@ -331,6 +338,12 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="upd-banner" id="updBanner" role="status">
+  <span>Hay datos más recientes disponibles.</span>
+  <button onclick="location.reload()">Actualizar ahora</button>
+  <button class="x" onclick="document.getElementById('updBanner').classList.remove('on')" title="Cerrar">×</button>
+</div>
 
 <script>
 /* ---------- colores ---------- */
@@ -922,6 +935,34 @@ function filtrarProvincia(nombre){
   closeInamhi();
 }
 
+/* ---------- aviso de versión nueva (detecta datos más recientes publicados) ---------- */
+let _sigDatos = null, _avisoMostrado = false;
+async function revisarVersion(auto){
+  if(location.protocol === 'file:' || _avisoMostrado) return;
+  try{
+    const res = await fetch(location.origin + location.pathname + '?_=' + Date.now(), {cache:'no-store'});
+    if(!res.ok) return;
+    const txt = await res.text();
+    const m = txt.match(/const SEED=(\[[\s\S]*?\]);\s*\nconst today/);
+    if(!m) return;
+    if(JSON.stringify(JSON.parse(m[1])) !== _sigDatos){
+      // Si al abrir ya estaba desactualizada (copia en caché), recargar sola una vez
+      try{
+        const k = 'mi_autoreload', t = +sessionStorage.getItem(k) || 0;
+        if(auto && Date.now() - t > 120000){ sessionStorage.setItem(k, Date.now()); location.reload(); return; }
+      }catch(e){}
+      _avisoMostrado = true;
+      document.getElementById('updBanner').classList.add('on');
+    }
+  }catch(e){ /* sin conexión o bloqueado: no hacer nada */ }
+}
+function iniciarVigilanciaVersion(){
+  _sigDatos = JSON.stringify(SEED);
+  setTimeout(()=>revisarVersion(true), 4000);
+  setInterval(revisarVersion, 5*60*1000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) revisarVersion(); });
+}
+
 /* ---------- últimas alertas ---------- */
 function getNovedades(){
   return state.records.filter(r=>r.novedad && r.novedad.resumen)
@@ -980,5 +1021,6 @@ function toast(msg){
   await loadState();
   render();
   if(getNovedades().length) openNovedades();
+  iniciarVigilanciaVersion();
 })();
 </script>
